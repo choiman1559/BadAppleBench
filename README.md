@@ -17,3 +17,6 @@ Prints ascii-ed "Bad Apple" video.
   -t, --ratio=<ratioValueResize>
                        Ratio value when resetting frame size
 ```
+
+example:
+`java -jar BadApple.main.jar -r -s=false -c=false -d 24 -t 4 -a=true`
