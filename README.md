@@ -20,3 +20,5 @@ Prints ascii-ed "Bad Apple" video.
 
 example:
 `java -jar BadApple.main.jar -r -s=false -c=false -d 24 -t 4 -a=true`
+
+<img src="https://i.ibb.co/qnPW1dZ/2021-06-07-12-36-51.png" alt="drawing" width="400"/> <img src="https://i.ibb.co/XYTXbhQ/2021-06-07-12-00-40.png" alt="drawing" width="400"/>
