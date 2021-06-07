@@ -1,6 +1,7 @@
 # BadApple_Java
 Playes BadApple in java using JavaCV and FFmpeg.
 
+```
 Usage: BadAppleJava [-achlrs] [-d=<delayMilliseconds>] [-f=ARCHIVE]
                     [-t=<ratioValueResize>]
 Prints ascii-ed "Bad Apple" video.
@@ -15,3 +16,4 @@ Prints ascii-ed "Bad Apple" video.
   -s, --sync           Sync audio with video
   -t, --ratio=<ratioValueResize>
                        Ratio value when resetting frame size
+```
