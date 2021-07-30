@@ -24,13 +24,16 @@ public class BadApple {
         public boolean helpRequested = false;
 
         @picocli.CommandLine.Option(names = {"-r", "--resize"}, description = "Set whether or not to resize the image")
-        public boolean reSize = false;
+        public boolean reSize = true;
 
         @picocli.CommandLine.Option(names = {"-c", "--clear"}, description = "Clear terminal when refresh frame")
         public boolean cleanTerminal = false;
 
         @picocli.CommandLine.Option(names = {"-d", "--delay"}, description = "Set the delay between frames (milliseconds)")
         public long delayMilliseconds = 26;
+
+        @picocli.CommandLine.Option(names = {"-dn", "--delay-nano"}, description = "Set the delay between frames (milliseconds)")
+        public long delayNanoseconds = -1;
 
         @picocli.CommandLine.Option(names = {"-t", "--ratio"} ,description = "Ratio value when resetting frame size")
         public int ratioValueResize = 1;
@@ -43,6 +46,12 @@ public class BadApple {
 
         @picocli.CommandLine.Option(names = {"-s", "--sync"}, description = "Sync audio with video")
         public boolean syncAudioWithVideo = false;
+
+        @picocli.CommandLine.Option(names = {"-e", "--engine"}, description = "Convert to Ascii art using my own engine")
+        public boolean useInnerEngine = false;
+
+        @picocli.CommandLine.Option(names = {"-p", "--render"}, description = "Pre-Render the image before play the video")
+        public boolean usePreRender = false;
 
         @picocli.CommandLine.Option(names = {"-f", "--file"}, paramLabel = "ARCHIVE", description = "target *.mp4 file to play")
         public File inputFile = null;
@@ -96,16 +105,33 @@ public class BadApple {
             StringBuilder textToPrint = new StringBuilder();
             if (frame != null) {
                 BufferedImage originImg = FrameToBufferedImage(frame);
-                BufferedImage img = parameters.reSize ? Thumbnails.of(originImg)
-                        .size(originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / parameters.ratioValueResize)
-                        .keepAspectRatio(true).asBufferedImage() : originImg;
-                for (int i = 0; i < img.getHeight(); i++) {
-                    for (int j = 0; j < img.getWidth(); j++) {
-                        Color pixcol = new Color(img.getRGB(j, i));
-                        double pixval = (((pixcol.getRed() * 0.30) + (pixcol.getBlue() * 0.59) + (pixcol.getGreen() * 0.11)));
-                        textToPrint.append(strChar(pixval));
+                if(parameters.useInnerEngine) {
+                    final String base = "@#&$%*o!;.";
+                    int ratioForIndex = parameters.ratioValueResize * 4;
+                    for (int index = 0; index < originImg.getHeight(); index += ratioForIndex) {
+                        for (int j = 0; j < originImg.getWidth(); j += parameters.ratioValueResize) {
+                            int pixel = originImg.getRGB(j, index);
+                            int red = (pixel & 0xff0000) >> 16;
+                            int green = (pixel & 0xff00) >> 8;
+                            int blue = (pixel & 0xff);
+                            float gray = 0.299f * red + 0.578f * green + 0.114f * blue;
+                            int indexBase = Math.round(gray * (base.length() + 1) / 255);
+                            textToPrint.append(indexBase >= base.length() ? " " : String.valueOf(base.charAt(indexBase)));
+                        }
+                        textToPrint.append("\r\n");
                     }
-                    textToPrint.append("\n");
+                } else {
+                    BufferedImage img = parameters.reSize ? Thumbnails.of(originImg)
+                            .size(originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / parameters.ratioValueResize)
+                            .keepAspectRatio(true).asBufferedImage() : originImg;
+                    for (int i = 0; i < img.getHeight(); i++) {
+                        for (int j = 0; j < img.getWidth(); j++) {
+                            Color pixcol = new Color(img.getRGB(j, i));
+                            double pixval = (((pixcol.getRed() * 0.30) + (pixcol.getBlue() * 0.59) + (pixcol.getGreen() * 0.11)));
+                            textToPrint.append(strChar(pixval));
+                        }
+                        textToPrint.append("\n");
+                    }
                 }
             }
 
@@ -116,7 +142,16 @@ public class BadApple {
             }
 
             flag++;
-            Thread.sleep(parameters.delayMilliseconds);
+            if(parameters.delayNanoseconds < 0) {
+                Thread.sleep(parameters.delayMilliseconds);
+            } else {
+                long start = System.nanoTime();
+                long end;
+                do{
+                    end = System.nanoTime();
+                } while((start + parameters.delayNanoseconds) - end >= 0);
+            }
+
             if (parameters.playAudio && parameters.syncAudioWithVideo) {
                 audioFrame = audioGrabber.grabSamples();
                 processAudio(audioFrame.samples, sampleFormat, sourceDataLine);
