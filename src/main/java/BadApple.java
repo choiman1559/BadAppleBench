@@ -1,3 +1,4 @@
+import com.diogonunes.jcolor.Attribute;
 import net.coobird.thumbnailator.Thumbnails;
 import org.bytedeco.ffmpeg.global.avutil;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
@@ -8,13 +9,15 @@ import javax.sound.sampled.*;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.net.URL;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
+import java.nio.charset.StandardCharsets;
+
+import static com.diogonunes.jcolor.Ansi.colorize;
 
 public class BadApple {
 
@@ -35,7 +38,7 @@ public class BadApple {
         @picocli.CommandLine.Option(names = {"-dn", "--delay-nano"}, description = "Set the delay between frames (milliseconds)")
         public long delayNanoseconds = -1;
 
-        @picocli.CommandLine.Option(names = {"-t", "--ratio"} ,description = "Ratio value when resetting frame size")
+        @picocli.CommandLine.Option(names = {"-t", "--ratio"}, description = "Ratio value when resetting frame size")
         public int ratioValueResize = 1;
 
         @picocli.CommandLine.Option(names = {"-a", "--audio"}, description = "Play mp4 file's audio")
@@ -55,6 +58,12 @@ public class BadApple {
 
         @picocli.CommandLine.Option(names = {"-f", "--file"}, paramLabel = "ARCHIVE", description = "target *.mp4 file to play")
         public File inputFile = null;
+
+        @picocli.CommandLine.Option(names = {"-b", "--buffer-output"}, description = "use more buffer when print ascii")
+        public boolean isBufferStream = true;
+
+        @picocli.CommandLine.Option(names = {"-q", "--print-color"}, description = "print color as well as ascii texts")
+        public boolean printColor = false;
     }
 
     public static void grabberVideoFramer(Parameters parameters) throws IOException, InterruptedException, LineUnavailableException {
@@ -63,6 +72,10 @@ public class BadApple {
 
         int flag = 0;
         URL resource = parameters.inputFile != null && parameters.inputFile.exists() ? parameters.inputFile.toURI().toURL() : BadApple.class.getResource("BadApple.mp4");
+        if (resource == null) {
+            System.out.println("Error: target resource uri is Null!");
+            throw new NullPointerException("target resource uri is Null!");
+        }
 
         FFmpegFrameGrabber fFmpegFrameGrabber = new FFmpegFrameGrabber(resource.openStream());
         fFmpegFrameGrabber.start();
@@ -82,7 +95,7 @@ public class BadApple {
         System.out.println("Start running video extraction frame, it takes a long time");
 
         Thread audioThread = null;
-        if(parameters.playAudio && !parameters.syncAudioWithVideo) {
+        if (parameters.playAudio && !parameters.syncAudioWithVideo) {
             audioThread = new Thread(() -> {
                 int audioFlag = 0;
                 int audioFtp = audioGrabber.getLengthInAudioFrames();
@@ -99,13 +112,15 @@ public class BadApple {
             audioThread.start();
         }
 
+        BufferedWriter printStream = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(java.io.FileDescriptor.out), StandardCharsets.US_ASCII), 512);
+
         while (flag <= ftp) {
             frame = fFmpegFrameGrabber.grabImage();
 
             StringBuilder textToPrint = new StringBuilder();
             if (frame != null) {
                 BufferedImage originImg = FrameToBufferedImage(frame);
-                if(parameters.useInnerEngine) {
+                if (parameters.useInnerEngine) {
                     final String base = "@#&$%*o!;.";
                     int ratioForIndex = parameters.ratioValueResize * 4;
                     for (int index = 0; index < originImg.getHeight(); index += ratioForIndex) {
@@ -116,7 +131,10 @@ public class BadApple {
                             int blue = (pixel & 0xff);
                             float gray = 0.299f * red + 0.578f * green + 0.114f * blue;
                             int indexBase = Math.round(gray * (base.length() + 1) / 255);
-                            textToPrint.append(indexBase >= base.length() ? " " : String.valueOf(base.charAt(indexBase)));
+
+                            String text = indexBase >= base.length() ? " " : String.valueOf(base.charAt(indexBase));
+                            if(parameters.printColor) textToPrint.append(colorize(text, Attribute.TEXT_COLOR(red, green, blue)));
+                            else textToPrint.append(text);
                         }
                         textToPrint.append("\r\n");
                     }
@@ -128,7 +146,8 @@ public class BadApple {
                         for (int j = 0; j < img.getWidth(); j++) {
                             Color pixcol = new Color(img.getRGB(j, i));
                             double pixval = (((pixcol.getRed() * 0.30) + (pixcol.getBlue() * 0.59) + (pixcol.getGreen() * 0.11)));
-                            textToPrint.append(strChar(pixval));
+                            if(parameters.printColor) textToPrint.append(colorize(strChar(pixval), Attribute.TEXT_COLOR(pixcol.getRed(), pixcol.getGreen(), pixcol.getBlue())));
+                            else textToPrint.append(strChar(pixval));
                         }
                         textToPrint.append("\n");
                     }
@@ -136,36 +155,47 @@ public class BadApple {
             }
 
             if (parameters.cleanTerminal) {
-                ProcessBuilder processBuilder = System.getProperty("os.name").contains("Windows") ? new ProcessBuilder("cmd", "/c", "cls") : new ProcessBuilder("clear");
-                Process process = processBuilder.inheritIO().start();
-                process.waitFor();
+                if (parameters.isBufferStream) {
+                    printStream.write("\033[H\033[2J");
+                    printStream.flush();
+                } else {
+                    ProcessBuilder processBuilder = System.getProperty("os.name").contains("Windows") ? new ProcessBuilder("cmd", "/c", "cls") : new ProcessBuilder("clear");
+                    Process process = processBuilder.inheritIO().start();
+                    process.waitFor();
+                }
             }
 
             flag++;
-            if(parameters.delayNanoseconds < 0) {
+            if (parameters.delayNanoseconds < 0) {
                 Thread.sleep(parameters.delayMilliseconds);
             } else {
                 long start = System.nanoTime();
                 long end;
-                do{
+                do {
                     end = System.nanoTime();
-                } while((start + parameters.delayNanoseconds) - end >= 0);
+                } while ((start + parameters.delayNanoseconds) - end >= 0);
             }
 
             if (parameters.playAudio && parameters.syncAudioWithVideo) {
                 audioFrame = audioGrabber.grabSamples();
                 processAudio(audioFrame.samples, sampleFormat, sourceDataLine);
             }
-            System.out.print(textToPrint.toString());
+
+            if (parameters.isBufferStream) {
+                printStream.write(String.valueOf(textToPrint));
+                printStream.flush();
+            } else System.out.print(textToPrint);
         }
 
-        if(audioThread != null && parameters.playAudio && !parameters.syncAudioWithVideo) {
+        if (audioThread != null && parameters.playAudio && !parameters.syncAudioWithVideo) {
             while (true) {
                 if (!audioThread.isAlive()) break;
             }
         }
-        if(!parameters.playAsLoop) System.out.println("============End of operation============");
+
+        if (!parameters.playAsLoop) System.out.println("============End of operation============");
         fFmpegFrameGrabber.stop();
+        printStream.close();
     }
 
     public static String strChar(double g) {
@@ -215,13 +245,7 @@ public class BadApple {
                 tr = TRData.array();
                 combine = new byte[tl.length + tr.length];
                 k = 0;
-                for (int i = 0; i < tl.length; i = i + 2) {
-                    for (int j = 0; j < 2; j++) {
-                        combine[j + 4 * k] = tl[i + j];
-                        combine[j + 2 + 4 * k] = tr[i + j];
-                    }
-                    k++;
-                }
+                combineByteArray(k, tl, tr, combine);
                 sourceDataLine.write(combine, 0, combine.length);
                 break;
             case avutil.AV_SAMPLE_FMT_S16:
@@ -245,19 +269,23 @@ public class BadApple {
                 tr = TRData.array();
                 combine = new byte[tl.length + tr.length];
                 k = 0;
-                for (int i = 0; i < tl.length; i = i + 2) {
-                    for (int j = 0; j < 2; j++) {
-                        combine[j + 4 * k] = tl[i + j];
-                        combine[j + 2 + 4 * k] = tr[i + j];
-                    }
-                    k++;
-                }
+                combineByteArray(k, tl, tr, combine);
                 sourceDataLine.write(combine, 0, combine.length);
                 break;
             default:
                 JOptionPane.showMessageDialog(null, "nonsupport audio format", "nonsupport audio format", JOptionPane.ERROR_MESSAGE);
                 System.exit(0);
                 break;
+        }
+    }
+
+    private static void combineByteArray(int k, byte[] tl, byte[] tr, byte[] combine) {
+        for (int i = 0; i < tl.length; i = i + 2) {
+            for (int j = 0; j < 2; j++) {
+                combine[j + 4 * k] = tl[i + j];
+                combine[j + 2 + 4 * k] = tr[i + j];
+            }
+            k++;
         }
     }
 
@@ -318,15 +346,15 @@ public class BadApple {
         Parameters parameters = new Parameters();
         picocli.CommandLine commandLine = new picocli.CommandLine(parameters);
         commandLine.setUnmatchedArgumentsAllowed(false).parseArgs(args);
-        if(parameters.inputFile != null) {
+        if (parameters.inputFile != null) {
             String[] names = parameters.inputFile.getName().split("\\.");
-            if(!names[names.length - 1].toLowerCase().equals("mp4")) {
+            if (!names[names.length - 1].equalsIgnoreCase("mp4")) {
                 System.out.println("Not supported file: " + parameters.inputFile.getName());
                 System.exit(-1);
             }
         }
 
-        if(!parameters.helpRequested) do {
+        if (!parameters.helpRequested) do {
             grabberVideoFramer(parameters);
         } while (parameters.playAsLoop);
         else System.out.print(commandLine.getUsageMessage());
