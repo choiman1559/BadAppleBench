@@ -53,7 +53,7 @@ public class BadApple {
         @picocli.CommandLine.Option(names = {"-e", "--engine"}, description = "Convert to Ascii art using my own engine")
         public boolean useInnerEngine = false;
 
-        @picocli.CommandLine.Option(names = {"-p", "--render"}, description = "Pre-Render the image before play the video")
+        @picocli.CommandLine.Option(names = {"-p", "--pre-render"}, description = "(Experimental) Pre-Render the image to ascii before play the video")
         public boolean usePreRender = false;
 
         @picocli.CommandLine.Option(names = {"-f", "--file"}, paramLabel = "ARCHIVE", description = "target *.mp4 file to play")
