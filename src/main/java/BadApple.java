@@ -16,6 +16,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 
 import static com.diogonunes.jcolor.Ansi.colorize;
 
@@ -37,6 +38,9 @@ public class BadApple {
 
         @picocli.CommandLine.Option(names = {"-dn", "--delay-nano"}, description = "Set the delay between frames (milliseconds)")
         public long delayNanoseconds = -1;
+
+        @picocli.CommandLine.Option(names = {"-ad", "--auto-delay"}, description = "(Experimental) Automatically determines delay length")
+        public boolean autoDelay = false;
 
         @picocli.CommandLine.Option(names = {"-t", "--ratio"}, description = "Ratio value when resetting frame size")
         public int ratioValueResize = 1;
@@ -66,7 +70,14 @@ public class BadApple {
         public boolean printColor = false;
     }
 
-    public static void grabberVideoFramer(Parameters parameters) throws IOException, InterruptedException, LineUnavailableException {
+    static Parameters parameters;
+    static ArrayList<String> frameList = new ArrayList<>();
+    static boolean isFirstFrame = true;
+    static long defaultDelayLength;
+    static BufferedWriter printStream;
+    static double lastDelay = 0L;
+
+    public static void grabberVideoFramer() throws IOException, LineUnavailableException, InterruptedException {
         Frame frame;
         Frame audioFrame;
 
@@ -91,81 +102,101 @@ public class BadApple {
         sourceDataLine.start();
 
         int ftp = fFmpegFrameGrabber.getLengthInFrames();
+        defaultDelayLength = (long) (1000 / fFmpegFrameGrabber.getFrameRate());
+        printStream = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(java.io.FileDescriptor.out), StandardCharsets.US_ASCII), 512);
+
         System.out.println("Duration" + ftp / fFmpegFrameGrabber.getFrameRate() / 60);
         System.out.println("Start running video extraction frame, it takes a long time");
 
-        Thread audioThread = null;
-        if (parameters.playAudio && !parameters.syncAudioWithVideo) {
-            audioThread = new Thread(() -> {
-                int audioFlag = 0;
-                int audioFtp = audioGrabber.getLengthInAudioFrames();
-
-                while (audioFlag <= audioFtp) {
-                    try {
-                        processAudio(audioGrabber.grabSamples().samples, sampleFormat, sourceDataLine);
-                    } catch (FFmpegFrameGrabber.Exception e) {
-                        e.printStackTrace();
-                    }
-                    audioFlag++;
-                }
-            });
+        Thread audioThread = getAudioThread(audioGrabber, sampleFormat, sourceDataLine);
+        if(!parameters.usePreRender && parameters.playAudio && !parameters.syncAudioWithVideo) {
             audioThread.start();
         }
-
-        BufferedWriter printStream = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(java.io.FileDescriptor.out), StandardCharsets.US_ASCII), 512);
 
         while (flag <= ftp) {
             frame = fFmpegFrameGrabber.grabImage();
 
-            StringBuilder textToPrint = new StringBuilder();
+            String textToPrint = "";
             if (frame != null) {
                 BufferedImage originImg = FrameToBufferedImage(frame);
+                if(originImg == null) continue;
+
                 if (parameters.useInnerEngine) {
-                    final String base = "@#&$%*o!;.";
-                    int ratioForIndex = parameters.ratioValueResize * 4;
-                    for (int index = 0; index < originImg.getHeight(); index += ratioForIndex) {
-                        for (int j = 0; j < originImg.getWidth(); j += parameters.ratioValueResize) {
-                            int pixel = originImg.getRGB(j, index);
-                            int red = (pixel & 0xff0000) >> 16;
-                            int green = (pixel & 0xff00) >> 8;
-                            int blue = (pixel & 0xff);
-                            float gray = 0.299f * red + 0.578f * green + 0.114f * blue;
-                            int indexBase = Math.round(gray * (base.length() + 1) / 255);
-
-                            String text = indexBase >= base.length() ? " " : String.valueOf(base.charAt(indexBase));
-                            if(parameters.printColor) textToPrint.append(colorize(text, Attribute.TEXT_COLOR(red, green, blue)));
-                            else textToPrint.append(text);
-                        }
-                        textToPrint.append("\r\n");
-                    }
+                    textToPrint = processFrameIntoString(originImg);
                 } else {
-                    BufferedImage img = parameters.reSize ? Thumbnails.of(originImg)
-                            .size(originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / parameters.ratioValueResize)
-                            .keepAspectRatio(true).asBufferedImage() : originImg;
-                    for (int i = 0; i < img.getHeight(); i++) {
-                        for (int j = 0; j < img.getWidth(); j++) {
-                            Color pixcol = new Color(img.getRGB(j, i));
-                            double pixval = (((pixcol.getRed() * 0.30) + (pixcol.getBlue() * 0.59) + (pixcol.getGreen() * 0.11)));
-                            if(parameters.printColor) textToPrint.append(colorize(strChar(pixval), Attribute.TEXT_COLOR(pixcol.getRed(), pixcol.getGreen(), pixcol.getBlue())));
-                            else textToPrint.append(strChar(pixval));
-                        }
-                        textToPrint.append("\n");
-                    }
-                }
-            }
-
-            if (parameters.cleanTerminal) {
-                if (parameters.isBufferStream) {
-                    printStream.write("\033[H\033[2J");
-                    printStream.flush();
-                } else {
-                    ProcessBuilder processBuilder = System.getProperty("os.name").contains("Windows") ? new ProcessBuilder("cmd", "/c", "cls") : new ProcessBuilder("clear");
-                    Process process = processBuilder.inheritIO().start();
-                    process.waitFor();
+                    textToPrint = processFrameIntoStringUsingEncoder(originImg);
                 }
             }
 
             flag++;
+            if(parameters.usePreRender) {
+                frameList.add(textToPrint);
+            } else {
+                if (parameters.playAudio && parameters.syncAudioWithVideo) {
+                    audioFrame = audioGrabber.grabSamples();
+                    processAudio(audioFrame.samples, sampleFormat, sourceDataLine);
+                }
+                printAndWaitFrame(textToPrint);
+            }
+        }
+
+        if(parameters.usePreRender) {
+            if(parameters.playAudio && !parameters.syncAudioWithVideo) {
+                audioThread.start();
+            }
+
+            for(String textToPrint: frameList) {
+                printAndWaitFrame(textToPrint);
+            }
+        }
+
+        if (parameters.playAudio && !parameters.syncAudioWithVideo) {
+            while (true) {
+                if (!audioThread.isAlive()) break;
+            }
+        }
+
+        if (!parameters.playAsLoop) System.out.println("============End of operation============");
+        fFmpegFrameGrabber.stop();
+        printStream.close();
+    }
+
+    private static void printAndWaitFrame(String textToPrint) throws IOException, InterruptedException {
+        if (parameters.cleanTerminal) {
+            if (parameters.isBufferStream) {
+                printStream.write("\033[H\033[2J");
+                printStream.flush();
+            } else {
+                ProcessBuilder processBuilder = System.getProperty("os.name").contains("Windows") ? new ProcessBuilder("cmd", "/c", "cls") : new ProcessBuilder("clear");
+                Process process = processBuilder.inheritIO().start();
+                process.waitFor();
+            }
+        }
+
+        if(parameters.autoDelay) {
+            textToPrint += " Delay (ms): " + lastDelay + " Fps: " + (1000 / lastDelay) + "\n";
+        }
+
+        long printStartedTime = System.currentTimeMillis();
+        if (parameters.isBufferStream) {
+            printStream.write(textToPrint);
+            printStream.flush();
+        } else System.out.print(textToPrint);
+
+        if(parameters.autoDelay) {
+            if(isFirstFrame) {
+                isFirstFrame = false;
+            } else {
+                double delay = defaultDelayLength - (System.currentTimeMillis() - printStartedTime);
+                if(delay >= 0) {
+                    delay = delay - (textToPrint.length() * 0.00003);
+                    if(delay > 0) {
+                        Thread.sleep((long) delay);
+                    }
+                }
+                lastDelay = delay;
+            }
+        } else {
             if (parameters.delayNanoseconds < 0) {
                 Thread.sleep(parameters.delayMilliseconds);
             } else {
@@ -175,27 +206,64 @@ public class BadApple {
                     end = System.nanoTime();
                 } while ((start + parameters.delayNanoseconds) - end >= 0);
             }
+        }
+    }
 
-            if (parameters.playAudio && parameters.syncAudioWithVideo) {
-                audioFrame = audioGrabber.grabSamples();
-                processAudio(audioFrame.samples, sampleFormat, sourceDataLine);
+    private static Thread getAudioThread(FFmpegFrameGrabber audioGrabber, int sampleFormat, SourceDataLine sourceDataLine) {
+        return new Thread(() -> {
+            int audioFlag = 0;
+            int audioFtp = audioGrabber.getLengthInAudioFrames();
+
+            while (audioFlag <= audioFtp) {
+                try {
+                    processAudio(audioGrabber.grabSamples().samples, sampleFormat, sourceDataLine);
+                } catch (FFmpegFrameGrabber.Exception e) {
+                    System.out.println("Error while processing audio:" + e.getMessage());
+                }
+                audioFlag++;
             }
+        });
+    }
 
-            if (parameters.isBufferStream) {
-                printStream.write(String.valueOf(textToPrint));
-                printStream.flush();
-            } else System.out.print(textToPrint);
+    public static String processFrameIntoString(BufferedImage originImg) {
+        StringBuilder textToPrint = new StringBuilder();
+        final String base = "@#&$%*o!;.";
+        int ratioForIndex = parameters.ratioValueResize * 4;
+        for (int index = 0; index < originImg.getHeight(); index += ratioForIndex) {
+            for (int j = 0; j < originImg.getWidth(); j += parameters.ratioValueResize) {
+                int pixel = originImg.getRGB(j, index);
+                int red = (pixel & 0xff0000) >> 16;
+                int green = (pixel & 0xff00) >> 8;
+                int blue = (pixel & 0xff);
+                float gray = 0.299f * red + 0.578f * green + 0.114f * blue;
+                int indexBase = Math.round(gray * (base.length() + 1) / 255);
+
+                String text = indexBase >= base.length() ? " " : String.valueOf(base.charAt(indexBase));
+                if(parameters.printColor) textToPrint.append(colorize(text, Attribute.TEXT_COLOR(red, green, blue)));
+                else textToPrint.append(text);
+            }
+            textToPrint.append("\r\n");
         }
 
-        if (audioThread != null && parameters.playAudio && !parameters.syncAudioWithVideo) {
-            while (true) {
-                if (!audioThread.isAlive()) break;
-            }
-        }
+        return textToPrint.toString();
+    }
 
-        if (!parameters.playAsLoop) System.out.println("============End of operation============");
-        fFmpegFrameGrabber.stop();
-        printStream.close();
+    public static String processFrameIntoStringUsingEncoder(BufferedImage originImg) throws IOException {
+        StringBuilder textToPrint = new StringBuilder();
+        BufferedImage img = parameters.reSize ? Thumbnails.of(originImg)
+                .size(originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / parameters.ratioValueResize)
+                .keepAspectRatio(true).asBufferedImage() : originImg;
+
+        for (int i = 0; i < img.getHeight(); i++) {
+            for (int j = 0; j < img.getWidth(); j++) {
+                Color pixelCol = new Color(img.getRGB(j, i));
+                double pixelVal = (((pixelCol.getRed() * 0.30) + (pixelCol.getBlue() * 0.59) + (pixelCol.getGreen() * 0.11)));
+                if(parameters.printColor) textToPrint.append(colorize(strChar(pixelVal), Attribute.TEXT_COLOR(pixelCol.getRed(), pixelCol.getGreen(), pixelCol.getBlue())));
+                else textToPrint.append(strChar(pixelVal));
+            }
+            textToPrint.append("\n");
+        }
+        return textToPrint.toString();
     }
 
     public static String strChar(double g) {
@@ -223,8 +291,13 @@ public class BadApple {
     }
 
     public static BufferedImage FrameToBufferedImage(Frame frame) {
-        Java2DFrameConverter converter = new Java2DFrameConverter();
-        return converter.getBufferedImage(frame);
+        try (Java2DFrameConverter converter = new Java2DFrameConverter()) {
+            return converter.getBufferedImage(frame);
+        } catch (Exception e) {
+            System.out.println("Error: " + e.getMessage());
+        }
+
+        return null;
     }
 
     public static void processAudio(Buffer[] samples, int sampleFormat, SourceDataLine sourceDataLine) {
@@ -343,7 +416,7 @@ public class BadApple {
     }
 
     public static void main(String[] args) throws IOException, InterruptedException, LineUnavailableException {
-        Parameters parameters = new Parameters();
+        parameters = new Parameters();
         picocli.CommandLine commandLine = new picocli.CommandLine(parameters);
         commandLine.setUnmatchedArgumentsAllowed(false).parseArgs(args);
         if (parameters.inputFile != null) {
@@ -355,7 +428,7 @@ public class BadApple {
         }
 
         if (!parameters.helpRequested) do {
-            grabberVideoFramer(parameters);
+            grabberVideoFramer();
         } while (parameters.playAsLoop);
         else System.out.print(commandLine.getUsageMessage());
     }
