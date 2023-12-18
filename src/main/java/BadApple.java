@@ -17,6 +17,7 @@ import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.diogonunes.jcolor.Ansi.colorize;
 
@@ -26,6 +27,9 @@ public class BadApple {
     static class Parameters {
         @picocli.CommandLine.Option(names = {"-h", "--help"}, usageHelp = true, description = "Display a help message")
         public boolean helpRequested = false;
+
+        @picocli.CommandLine.Option(names = {"-v", "--verbose"}, description = "Print debug log under frame while playing video")
+        public boolean verbose = false;
 
         @picocli.CommandLine.Option(names = {"-r", "--resize"}, description = "Set whether or not to resize the image")
         public boolean reSize = true;
@@ -42,7 +46,10 @@ public class BadApple {
         @picocli.CommandLine.Option(names = {"-ad", "--auto-delay"}, description = "(Experimental) Automatically determines delay length")
         public boolean autoDelay = false;
 
-        @picocli.CommandLine.Option(names = {"-t", "--ratio"}, description = "Ratio value when resetting frame size")
+        @picocli.CommandLine.Option(names = {"-ar", "--auto-ratio"}, description = "(Experimental) Automatically determines downscale ratio")
+        public boolean autoRatio = false;
+
+        @picocli.CommandLine.Option(names = {"-t", "--ratio"}, description = "Aspect ratio value to downscale frames")
         public int ratioValueResize = 1;
 
         @picocli.CommandLine.Option(names = {"-a", "--audio"}, description = "Play mp4 file's audio")
@@ -51,13 +58,13 @@ public class BadApple {
         @picocli.CommandLine.Option(names = {"-l", "--loop"}, description = "Play video by loop")
         public boolean playAsLoop = false;
 
-        @picocli.CommandLine.Option(names = {"-s", "--sync"}, description = "Sync audio with video")
+        @picocli.CommandLine.Option(names = {"-s", "--sync-audio"}, description = "Sync audio with video")
         public boolean syncAudioWithVideo = false;
 
         @picocli.CommandLine.Option(names = {"-e", "--engine"}, description = "Convert to Ascii art using my own engine")
         public boolean useInnerEngine = false;
 
-        @picocli.CommandLine.Option(names = {"-p", "--pre-render"}, description = "(Experimental) Pre-Render the image to ascii before play the video")
+        @picocli.CommandLine.Option(names = {"-p", "--pre-render"}, description = "(Experimental) Pre-Render all the frames to ascii before play the video (Warning: Requires a lot of memory)")
         public boolean usePreRender = false;
 
         @picocli.CommandLine.Option(names = {"-f", "--file"}, paramLabel = "ARCHIVE", description = "target *.mp4 file to play")
@@ -71,17 +78,67 @@ public class BadApple {
     }
 
     static Parameters parameters;
-    static ArrayList<String> frameList = new ArrayList<>();
-    static boolean isFirstFrame = true;
-    static long defaultDelayLength;
     static BufferedWriter printStream;
+    static ArrayList<String> frameList = new ArrayList<>();
+    static Thread audioThread;
+    static final AtomicBoolean audioWaitLonger = new AtomicBoolean();
+    static final Object audioLock = new Object ();
+
+    static boolean isFirstFrame = true;
+    static int frameWarmUpCount = 2;
+    static long defaultDelayLength;
     static double lastDelay = 0L;
+
+    static int videoFrameIndex;
+    static int audioFrameIndex;
+    static double videoFrameRate;
+    static double audioFrameRate;
+
+    static final int warmUpDelayWindowSize = 5;
+    static final int mainDelayWindowSize = 35;
+    static int decidedDelayWindowSize = warmUpDelayWindowSize;
+    static int warmUpCompleteWindowTick = 50;
+    static double[] delayTimeWindow = new double[decidedDelayWindowSize];
+    static int delayWindowIndex = 0;
+
+    static final int SYNC_AUDIO_FAST = 1;
+    static final int SYNC_FIT = 0;
+    static final int SYNC_VIDEO_FAST = -1;
+    static int audioSyncStatement = SYNC_FIT;
+
+    static class RegionsMonitoringObject {
+        int performanceThreshold;
+        int performanceCount = -1;
+        int monitoredRegionsThreshold;
+        int monitoredRegionsStartFrames = 0;
+        boolean withinMonitoredRegion = false;
+
+        void calculateRegion() {
+            if (!withinMonitoredRegion) {
+                monitoredRegionsStartFrames = videoFrameIndex;
+                withinMonitoredRegion = true;
+            } else if(videoFrameIndex - monitoredRegionsStartFrames < monitoredRegionsThreshold){
+                performanceCount -= 1;
+            }
+        }
+
+        void resetRegion() {
+            performanceCount = performanceThreshold;
+            withinMonitoredRegion = false;
+        }
+
+        void checkExceedRegionAndReset() {
+            if (withinMonitoredRegion && videoFrameIndex - monitoredRegionsStartFrames > monitoredRegionsThreshold) {
+                resetRegion();
+            }
+        }
+    }
+
+    static RegionsMonitoringObject poorMonitoring = new RegionsMonitoringObject();
+    static RegionsMonitoringObject goodMonitoring = new RegionsMonitoringObject();
 
     public static void grabberVideoFramer() throws IOException, LineUnavailableException, InterruptedException {
         Frame frame;
-        Frame audioFrame;
-
-        int flag = 0;
         URL resource = parameters.inputFile != null && parameters.inputFile.exists() ? parameters.inputFile.toURI().toURL() : BadApple.class.getResource("BadApple.mp4");
         if (resource == null) {
             System.out.println("Error: target resource uri is Null!");
@@ -101,21 +158,39 @@ public class BadApple {
         sourceDataLine.open(af);
         sourceDataLine.start();
 
-        int ftp = fFmpegFrameGrabber.getLengthInFrames();
         defaultDelayLength = (long) (1000 / fFmpegFrameGrabber.getFrameRate());
         printStream = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(java.io.FileDescriptor.out), StandardCharsets.US_ASCII), 512);
+        videoFrameIndex = 0;
 
-        System.out.println("Duration" + ftp / fFmpegFrameGrabber.getFrameRate() / 60);
+        if(parameters.autoRatio) {
+            parameters.ratioValueResize = 1;
+        }
+
+        double videoTotalFrame = fFmpegFrameGrabber.getLengthInFrames();
+        double audioTotalFrame = audioGrabber.getLengthInAudioFrames();
+
+        videoFrameRate = fFmpegFrameGrabber.getVideoFrameRate();
+        audioFrameRate = audioGrabber.getAudioFrameRate();
+        audioWaitLonger.set(false);
+
+        poorMonitoring.monitoredRegionsThreshold = (int) (videoFrameRate * 5);
+        poorMonitoring.performanceThreshold = poorMonitoring.monitoredRegionsThreshold / 2;
+
+        goodMonitoring.monitoredRegionsThreshold = (int) (videoFrameRate * 20);
+        goodMonitoring.performanceThreshold = (int) (goodMonitoring.monitoredRegionsThreshold * 0.9);
+
+        System.out.println("Duration Video: " + videoTotalFrame / videoFrameRate + ", Audio: " + audioTotalFrame / audioFrameRate);
         System.out.println("Start running video extraction frame, it takes a long time");
 
-        Thread audioThread = getAudioThread(audioGrabber, sampleFormat, sourceDataLine);
-        if(!parameters.usePreRender && parameters.playAudio && !parameters.syncAudioWithVideo) {
+        initAudioThread(audioGrabber, sampleFormat, sourceDataLine);
+        if(!parameters.usePreRender && parameters.playAudio) {
             audioThread.start();
         }
 
-        while (flag <= ftp) {
+        while (videoFrameIndex <= videoTotalFrame) {
             frame = fFmpegFrameGrabber.grabImage();
 
+            long printStartedTime = System.currentTimeMillis();
             String textToPrint = "";
             if (frame != null) {
                 BufferedImage originImg = FrameToBufferedImage(frame);
@@ -128,40 +203,55 @@ public class BadApple {
                 }
             }
 
-            flag++;
+            videoFrameIndex++;
             if(parameters.usePreRender) {
                 frameList.add(textToPrint);
             } else {
-                if (parameters.playAudio && parameters.syncAudioWithVideo) {
-                    audioFrame = audioGrabber.grabSamples();
-                    processAudio(audioFrame.samples, sampleFormat, sourceDataLine);
-                }
-                printAndWaitFrame(textToPrint);
+                printAndWaitFrame(textToPrint, printStartedTime);
             }
         }
 
         if(parameters.usePreRender) {
-            if(parameters.playAudio && !parameters.syncAudioWithVideo) {
+            if(parameters.playAudio) {
                 audioThread.start();
             }
 
             for(String textToPrint: frameList) {
-                printAndWaitFrame(textToPrint);
+                long printStartedTime = System.currentTimeMillis();
+                printAndWaitFrame(textToPrint, printStartedTime);
             }
         }
 
-        if (parameters.playAudio && !parameters.syncAudioWithVideo) {
+        if (parameters.playAudio) {
             while (true) {
                 if (!audioThread.isAlive()) break;
             }
         }
 
-        if (!parameters.playAsLoop) System.out.println("============End of operation============");
         fFmpegFrameGrabber.stop();
-        printStream.close();
+        if (!parameters.playAsLoop) {
+            System.out.println("============End of operation============");
+            printStream.close();
+        } else {
+            isFirstFrame = true;
+            frameWarmUpCount = 2;
+            lastDelay = 0L;
+
+            videoFrameIndex = 0;
+            audioFrameIndex = 0;
+            audioSyncStatement = SYNC_FIT;
+
+            decidedDelayWindowSize = warmUpDelayWindowSize;
+            warmUpCompleteWindowTick = 50;
+            delayTimeWindow = new double[decidedDelayWindowSize];
+            delayWindowIndex = 0;
+
+            poorMonitoring = new RegionsMonitoringObject();
+            goodMonitoring = new RegionsMonitoringObject();
+        }
     }
 
-    private static void printAndWaitFrame(String textToPrint) throws IOException, InterruptedException {
+    private static void printAndWaitFrame(String textToPrint, long printStartedTime) throws IOException, InterruptedException {
         if (parameters.cleanTerminal) {
             if (parameters.isBufferStream) {
                 printStream.write("\033[H\033[2J");
@@ -173,11 +263,25 @@ public class BadApple {
             }
         }
 
-        if(parameters.autoDelay) {
-            textToPrint += " Delay (ms): " + lastDelay + " Fps: " + (1000 / lastDelay) + "\n";
+        if(parameters.autoDelay && parameters.verbose) {
+            String[] lines = textToPrint.split(System.lineSeparator());
+            double videoInSecond = videoFrameIndex / videoFrameRate;
+            double audioInSecond = audioFrameIndex / audioFrameRate;
+
+            double sum = 0.0;
+            for (double time : delayTimeWindow) {
+                sum += time;
+            }
+            double averageProcessingTime =  sum / delayTimeWindow.length;
+
+            textToPrint += String.format(" Delay (ms): %.5f, Ratio: %s, Fps: %.5f\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s)\n",
+                    lastDelay, parameters.ratioValueResize, (1000 / lastDelay),
+                    lines.length, lines[0].length(), textToPrint.length(),
+                    videoInSecond, audioInSecond, audioInSecond - videoInSecond,
+                    averageProcessingTime, poorMonitoring.monitoredRegionsStartFrames, poorMonitoring.performanceCount, goodMonitoring.monitoredRegionsStartFrames, goodMonitoring.performanceCount
+            );
         }
 
-        long printStartedTime = System.currentTimeMillis();
         if (parameters.isBufferStream) {
             printStream.write(textToPrint);
             printStream.flush();
@@ -186,15 +290,15 @@ public class BadApple {
         if(parameters.autoDelay) {
             if(isFirstFrame) {
                 isFirstFrame = false;
+                frameWarmUpCount -= 1;
+            } else if(frameWarmUpCount > 0) {
+                frameWarmUpCount -= 1;
+                adjustDelay(printStartedTime, textToPrint);
             } else {
-                double delay = defaultDelayLength - (System.currentTimeMillis() - printStartedTime);
-                if(delay >= 0) {
-                    delay = delay - (textToPrint.length() * 0.00003);
-                    if(delay > 0) {
-                        Thread.sleep((long) delay);
-                    }
+                adjustDelay(printStartedTime, textToPrint);
+                if(parameters.autoRatio) {
+                    adjustDownSamplingRatio();
                 }
-                lastDelay = delay;
             }
         } else {
             if (parameters.delayNanoseconds < 0) {
@@ -207,20 +311,133 @@ public class BadApple {
                 } while ((start + parameters.delayNanoseconds) - end >= 0);
             }
         }
+
+        if(parameters.syncAudioWithVideo) {
+            final double allowableRange = 0.45;
+            double currentAudioSecond = audioFrameIndex / audioFrameRate ;
+            double currentVideoSecond = videoFrameIndex / videoFrameRate ;
+            double syncDiff = currentAudioSecond - currentVideoSecond;
+
+            if(syncDiff > allowableRange) {
+                audioSyncStatement = SYNC_AUDIO_FAST;
+                if(syncDiff > allowableRange * 2) synchronized (audioLock) {
+                    if(!audioWaitLonger.get()) {
+                        audioWaitLonger.set(true);
+                        audioLock.notify();
+                    }
+                }
+            } else if(syncDiff * -1 > allowableRange) {
+                audioSyncStatement = SYNC_VIDEO_FAST;
+                Thread.sleep((long) ((currentVideoSecond - currentAudioSecond) * 3));
+            } else if(syncDiff <= allowableRange) {
+                audioSyncStatement = SYNC_FIT;
+                if(audioWaitLonger.get()) synchronized (audioLock) {
+                    audioWaitLonger.set(false);
+                    audioLock.notify();
+                }
+            }
+        }
     }
 
-    private static Thread getAudioThread(FFmpegFrameGrabber audioGrabber, int sampleFormat, SourceDataLine sourceDataLine) {
-        return new Thread(() -> {
-            int audioFlag = 0;
+    private static void adjustDelay(long printStartedTime, String textToPrint) throws InterruptedException {
+        double delay = defaultDelayLength - (System.currentTimeMillis() - printStartedTime);
+        if(delay >= 0) {
+            double delayMargin = (textToPrint.length() * (parameters.printColor ? 0.000006 : 0.000003));
+            if(delay > delayMargin) switch (audioSyncStatement) {
+                case SYNC_AUDIO_FAST:
+                    delay -= delayMargin;
+                    break;
+
+                case SYNC_VIDEO_FAST:
+                    delay += delayMargin;
+                    break;
+
+                case SYNC_FIT:
+                    //Do Nothing
+                    break;
+            }
+            Thread.sleep((long) delay);
+        }
+        lastDelay = delay;
+    }
+
+    private static void adjustDownSamplingRatio() {
+        delayTimeWindow[delayWindowIndex] = lastDelay;
+        delayWindowIndex = (delayWindowIndex + 1) % decidedDelayWindowSize;
+
+        double sum = 0.0;
+        for (double time : delayTimeWindow) {
+            sum += time;
+        }
+        double averageProcessingTime =  sum / delayTimeWindow.length;
+
+        if (averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.99) {
+            if(decidedDelayWindowSize == mainDelayWindowSize) {
+                poorMonitoring.calculateRegion();
+                goodMonitoring.resetRegion();
+
+                if(poorMonitoring.performanceCount <= 0) {
+                    delayTimeWindow = new double[decidedDelayWindowSize];
+                    delayWindowIndex = 0;
+                    parameters.ratioValueResize += 1;
+                    poorMonitoring.resetRegion();
+                }
+            } else {
+                delayTimeWindow = new double[decidedDelayWindowSize];
+                delayWindowIndex = 0;
+                parameters.ratioValueResize += 1;
+            }
+        } else if (averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.4) {
+            if(decidedDelayWindowSize == mainDelayWindowSize) {
+                goodMonitoring.calculateRegion();
+                poorMonitoring.resetRegion();
+
+                if(goodMonitoring.performanceCount <= 0) {
+                    delayTimeWindow = new double[decidedDelayWindowSize];
+                    delayWindowIndex = 0;
+                    parameters.ratioValueResize -= 1;
+                    goodMonitoring.resetRegion();
+                }
+            }
+        } else {
+            if(decidedDelayWindowSize != mainDelayWindowSize && warmUpCompleteWindowTick < 0) {
+                decidedDelayWindowSize = mainDelayWindowSize;
+                delayTimeWindow = new double[decidedDelayWindowSize];
+                delayWindowIndex = 0;
+            } else {
+                warmUpCompleteWindowTick -= 1;
+            }
+
+            if(decidedDelayWindowSize == mainDelayWindowSize) {
+                poorMonitoring.checkExceedRegionAndReset();
+                goodMonitoring.checkExceedRegionAndReset();
+            }
+        }
+    }
+
+    private static void initAudioThread(FFmpegFrameGrabber audioGrabber, int sampleFormat, SourceDataLine sourceDataLine) {
+        if(audioThread == null || !audioThread.isAlive()) audioThread = new Thread(() -> {
+            audioFrameIndex = 0;
             int audioFtp = audioGrabber.getLengthInAudioFrames();
 
-            while (audioFlag <= audioFtp) {
+            while (audioFrameIndex <= audioFtp) {
+                synchronized (audioLock) {
+                    try {
+                        if(audioWaitLonger.get()) {
+                            audioLock.wait();
+                        }
+                    } catch (InterruptedException e) {
+                        System.out.println("Error Occurred while stopping audio thread: " + e.getMessage());
+                        continue;
+                    }
+                }
+
                 try {
                     processAudio(audioGrabber.grabSamples().samples, sampleFormat, sourceDataLine);
                 } catch (FFmpegFrameGrabber.Exception e) {
                     System.out.println("Error while processing audio:" + e.getMessage());
                 }
-                audioFlag++;
+                audioFrameIndex++;
             }
         });
     }
@@ -239,7 +456,7 @@ public class BadApple {
                 int indexBase = Math.round(gray * (base.length() + 1) / 255);
 
                 String text = indexBase >= base.length() ? " " : String.valueOf(base.charAt(indexBase));
-                if(parameters.printColor) textToPrint.append(colorize(text, Attribute.TEXT_COLOR(red, green, blue)));
+                if(parameters.printColor) textToPrint.append(colorize(text, Attribute.BACK_COLOR(red, green, blue)));
                 else textToPrint.append(text);
             }
             textToPrint.append("\r\n");
@@ -420,9 +637,14 @@ public class BadApple {
         picocli.CommandLine commandLine = new picocli.CommandLine(parameters);
         commandLine.setUnmatchedArgumentsAllowed(false).parseArgs(args);
         if (parameters.inputFile != null) {
+            if(!parameters.inputFile.canRead()) {
+                System.out.println("File Cannot be read: " + parameters.inputFile.getName());
+                System.exit(-1);
+            }
+
             String[] names = parameters.inputFile.getName().split("\\.");
             if (!names[names.length - 1].equalsIgnoreCase("mp4")) {
-                System.out.println("Not supported file: " + parameters.inputFile.getName());
+                System.out.println("Not supported file: " + parameters.inputFile.getName() + " Only supports MPEG-4 format!");
                 System.exit(-1);
             }
         }
