@@ -1,4 +1,10 @@
 import com.diogonunes.jcolor.Attribute;
+import com.googlecode.lanterna.graphics.TextGraphics;
+import com.googlecode.lanterna.screen.Screen;
+import com.googlecode.lanterna.screen.TerminalScreen;
+import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
+import com.googlecode.lanterna.terminal.Terminal;
+import com.googlecode.lanterna.terminal.swing.TerminalEmulatorDeviceConfiguration;
 import net.coobird.thumbnailator.Thumbnails;
 import org.bytedeco.ffmpeg.global.avutil;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
@@ -37,6 +43,9 @@ public class BadApple {
         @picocli.CommandLine.Option(names = {"-c", "--clear"}, description = "Clear terminal when refresh frame")
         public boolean cleanTerminal = false;
 
+        @picocli.CommandLine.Option(names = {"-cn", "--clear-curses"}, description = "Clear terminal using ncurses")
+        public boolean ncursesTerminal = false;
+
         @picocli.CommandLine.Option(names = {"-d", "--delay"}, description = "Set the delay between frames (milliseconds)")
         public long delayMilliseconds = 26;
 
@@ -73,12 +82,18 @@ public class BadApple {
         @picocli.CommandLine.Option(names = {"-b", "--buffer-output"}, description = "use more buffer when print ascii")
         public boolean isBufferStream = true;
 
+        @picocli.CommandLine.Option(names = {"-bs", "--buffer-size"}, description = "Size of Buffer, Default is 8192 bytes.")
+        public int bufferSize = 8192;
+
         @picocli.CommandLine.Option(names = {"-q", "--print-color"}, description = "print color as well as ascii texts")
         public boolean printColor = false;
     }
 
-    static Parameters parameters;
+    static Terminal terminal;
+    static Screen screen;
     static BufferedWriter printStream;
+
+    static Parameters parameters;
     static ArrayList<String> frameList = new ArrayList<>();
     static Thread audioThread;
     static final AtomicBoolean audioWaitLonger = new AtomicBoolean();
@@ -95,9 +110,9 @@ public class BadApple {
     static double audioFrameRate;
 
     static final int warmUpDelayWindowSize = 5;
-    static final int mainDelayWindowSize = 35;
+    static final int mainDelayWindowSize = 8;
     static int decidedDelayWindowSize = warmUpDelayWindowSize;
-    static int warmUpCompleteWindowTick = 50;
+    static int warmUpCompleteWindowTick = 45;
     static double[] delayTimeWindow = new double[decidedDelayWindowSize];
     static int delayWindowIndex = 0;
 
@@ -134,6 +149,8 @@ public class BadApple {
         }
     }
 
+    static int perfectCount;
+    static int perfectCountThreshold;
     static RegionsMonitoringObject poorMonitoring = new RegionsMonitoringObject();
     static RegionsMonitoringObject goodMonitoring = new RegionsMonitoringObject();
 
@@ -158,8 +175,19 @@ public class BadApple {
         sourceDataLine.open(af);
         sourceDataLine.start();
 
+        OutputStream outputStream = new FileOutputStream(java.io.FileDescriptor.out);
+        printStream = new BufferedWriter(new OutputStreamWriter(outputStream, StandardCharsets.US_ASCII), parameters.bufferSize);
+        terminal = new DefaultTerminalFactory(System.out, System.in, StandardCharsets.US_ASCII)
+                .setTerminalEmulatorDeviceConfiguration(TerminalEmulatorDeviceConfiguration.getDefault().withCursorBlinking(false))
+                .createTerminal();
+        screen = new TerminalScreen(terminal);
+
+        if(parameters.ncursesTerminal) {
+            terminal.setCursorVisible(false);
+            screen.startScreen();
+        }
+
         defaultDelayLength = (long) (1000 / fFmpegFrameGrabber.getFrameRate());
-        printStream = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(java.io.FileDescriptor.out), StandardCharsets.US_ASCII), 512);
         videoFrameIndex = 0;
 
         if(parameters.autoRatio) {
@@ -174,10 +202,15 @@ public class BadApple {
         audioWaitLonger.set(false);
 
         poorMonitoring.monitoredRegionsThreshold = (int) (videoFrameRate * 5);
-        poorMonitoring.performanceThreshold = poorMonitoring.monitoredRegionsThreshold / 2;
+        poorMonitoring.performanceThreshold = (int) (videoFrameRate * 1.5);
+        poorMonitoring.resetRegion();
 
-        goodMonitoring.monitoredRegionsThreshold = (int) (videoFrameRate * 20);
+        goodMonitoring.monitoredRegionsThreshold = (int) (videoFrameRate * 40);
         goodMonitoring.performanceThreshold = (int) (goodMonitoring.monitoredRegionsThreshold * 0.9);
+        poorMonitoring.resetRegion();
+
+        perfectCount = 0;
+        perfectCountThreshold = (int) (fFmpegFrameGrabber.getLengthInFrames() * 0.35);
 
         System.out.println("Duration Video: " + videoTotalFrame / videoFrameRate + ", Audio: " + audioTotalFrame / audioFrameRate);
         System.out.println("Start running video extraction frame, it takes a long time");
@@ -188,9 +221,10 @@ public class BadApple {
         }
 
         while (videoFrameIndex <= videoTotalFrame) {
+            long printStartedTime = System.currentTimeMillis();
+            videoFrameIndex++;
             frame = fFmpegFrameGrabber.grabImage();
 
-            long printStartedTime = System.currentTimeMillis();
             String textToPrint = "";
             if (frame != null) {
                 BufferedImage originImg = FrameToBufferedImage(frame);
@@ -203,7 +237,6 @@ public class BadApple {
                 }
             }
 
-            videoFrameIndex++;
             if(parameters.usePreRender) {
                 frameList.add(textToPrint);
             } else {
@@ -232,6 +265,12 @@ public class BadApple {
         if (!parameters.playAsLoop) {
             System.out.println("============End of operation============");
             printStream.close();
+
+            if(parameters.ncursesTerminal) {
+                clearScreen(true);
+                screen.stopScreen();
+                terminal.close();
+            }
         } else {
             isFirstFrame = true;
             frameWarmUpCount = 2;
@@ -252,40 +291,38 @@ public class BadApple {
     }
 
     private static void printAndWaitFrame(String textToPrint, long printStartedTime) throws IOException, InterruptedException {
-        if (parameters.cleanTerminal) {
+        clearScreen(false);
+        String[] lines = textToPrint.split(System.lineSeparator());
+        String verbose = getVerbose(textToPrint, lines);
+
+        if(parameters.ncursesTerminal) {
+            TextGraphics textGraphics = screen.newTextGraphics();
+            for(int i = 0; i < lines.length; i++) {
+                String line = lines[i];
+                textGraphics.putCSIStyledString(0, i, line);
+            }
+
+            if(!verbose.isEmpty()) {
+                String[] verboseLines = verbose.split(System.lineSeparator());
+                for(int i = 0;i < verboseLines.length; i++) {
+                    String line = verboseLines[i];
+                    textGraphics.putString(0, i + lines.length, line);
+                }
+            }
+
+            screen.refresh();
+        } else {
+            if(!verbose.isEmpty()) {
+                textToPrint += verbose;
+            }
+
             if (parameters.isBufferStream) {
-                printStream.write("\033[H\033[2J");
+                printStream.write(textToPrint + "\r");
                 printStream.flush();
             } else {
-                ProcessBuilder processBuilder = System.getProperty("os.name").contains("Windows") ? new ProcessBuilder("cmd", "/c", "cls") : new ProcessBuilder("clear");
-                Process process = processBuilder.inheritIO().start();
-                process.waitFor();
+                System.out.print(textToPrint);
             }
         }
-
-        if(parameters.autoDelay && parameters.verbose) {
-            String[] lines = textToPrint.split(System.lineSeparator());
-            double videoInSecond = videoFrameIndex / videoFrameRate;
-            double audioInSecond = audioFrameIndex / audioFrameRate;
-
-            double sum = 0.0;
-            for (double time : delayTimeWindow) {
-                sum += time;
-            }
-            double averageProcessingTime =  sum / delayTimeWindow.length;
-
-            textToPrint += String.format(" Delay (ms): %.5f, Ratio: %s, Fps: %.5f\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s)\n",
-                    lastDelay, parameters.ratioValueResize, (1000 / lastDelay),
-                    lines.length, lines[0].length(), textToPrint.length(),
-                    videoInSecond, audioInSecond, audioInSecond - videoInSecond,
-                    averageProcessingTime, poorMonitoring.monitoredRegionsStartFrames, poorMonitoring.performanceCount, goodMonitoring.monitoredRegionsStartFrames, goodMonitoring.performanceCount
-            );
-        }
-
-        if (parameters.isBufferStream) {
-            printStream.write(textToPrint);
-            printStream.flush();
-        } else System.out.print(textToPrint);
 
         if(parameters.autoDelay) {
             if(isFirstFrame) {
@@ -339,6 +376,30 @@ public class BadApple {
         }
     }
 
+    private static String getVerbose(String textToPrint, String[] lines) {
+        String verbose = "";
+        if(parameters.autoDelay && parameters.verbose) {
+            double videoInSecond = videoFrameIndex / videoFrameRate;
+            double audioInSecond = audioFrameIndex / audioFrameRate;
+
+            double sum = 0.0;
+            for (double time : delayTimeWindow) {
+                sum += time;
+            }
+            double averageProcessingTime =  sum / delayTimeWindow.length;
+
+            verbose = String.format(" Delay (ms): %.5f, Ratio: %s, Fps: %.5f\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Window: %d, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s), Perfect: (Threshold: %s, Count: %s)\n",
+                    lastDelay, parameters.ratioValueResize, (1000 / lastDelay),
+                    lines.length, lines[0].length(), textToPrint.length(),
+                    videoInSecond, audioInSecond, audioInSecond - videoInSecond,
+
+                    averageProcessingTime, delayTimeWindow.length, poorMonitoring.monitoredRegionsStartFrames, poorMonitoring.performanceCount,
+                    goodMonitoring.monitoredRegionsStartFrames, goodMonitoring.performanceCount, perfectCountThreshold, perfectCount
+            );
+        }
+        return verbose;
+    }
+
     private static void adjustDelay(long printStartedTime, String textToPrint) throws InterruptedException {
         double delay = defaultDelayLength - (System.currentTimeMillis() - printStartedTime);
         if(delay >= 0) {
@@ -361,7 +422,24 @@ public class BadApple {
         lastDelay = delay;
     }
 
-    private static void adjustDownSamplingRatio() {
+    private static void adjustDownSamplingRatio() throws IOException, InterruptedException {
+        if(decidedDelayWindowSize == mainDelayWindowSize) {
+            perfectCount += 1;
+            if(perfectCount >= perfectCountThreshold) {
+                parameters.autoRatio = false;
+            }
+        } else if(warmUpCompleteWindowTick > 0) {
+            warmUpCompleteWindowTick -= 1;
+        } else {
+            decidedDelayWindowSize = mainDelayWindowSize;
+            delayWindowIndex = 0;
+
+            double[] arrToCopy = delayTimeWindow;
+            delayTimeWindow = new double[decidedDelayWindowSize];
+            System.arraycopy(arrToCopy, 0, delayTimeWindow, 0, arrToCopy.length);
+            return;
+        }
+
         delayTimeWindow[delayWindowIndex] = lastDelay;
         delayWindowIndex = (delayWindowIndex + 1) % decidedDelayWindowSize;
 
@@ -371,7 +449,7 @@ public class BadApple {
         }
         double averageProcessingTime =  sum / delayTimeWindow.length;
 
-        if (averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.99) {
+        if (lastDelay < 0 || averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.99) {
             if(decidedDelayWindowSize == mainDelayWindowSize) {
                 poorMonitoring.calculateRegion();
                 goodMonitoring.resetRegion();
@@ -379,15 +457,20 @@ public class BadApple {
                 if(poorMonitoring.performanceCount <= 0) {
                     delayTimeWindow = new double[decidedDelayWindowSize];
                     delayWindowIndex = 0;
-                    parameters.ratioValueResize += 1;
                     poorMonitoring.resetRegion();
+                    perfectCount = 0;
+
+                    parameters.ratioValueResize += 1;
+                    clearScreen(true);
                 }
             } else {
                 delayTimeWindow = new double[decidedDelayWindowSize];
                 delayWindowIndex = 0;
+
                 parameters.ratioValueResize += 1;
+                clearScreen(true);
             }
-        } else if (averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.4) {
+        } else if (parameters.ratioValueResize > 1 && averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.3) {
             if(decidedDelayWindowSize == mainDelayWindowSize) {
                 goodMonitoring.calculateRegion();
                 poorMonitoring.resetRegion();
@@ -395,22 +478,34 @@ public class BadApple {
                 if(goodMonitoring.performanceCount <= 0) {
                     delayTimeWindow = new double[decidedDelayWindowSize];
                     delayWindowIndex = 0;
+
                     parameters.ratioValueResize -= 1;
+                    clearScreen(true);
                     goodMonitoring.resetRegion();
+                    perfectCount = 0;
                 }
             }
-        } else {
-            if(decidedDelayWindowSize != mainDelayWindowSize && warmUpCompleteWindowTick < 0) {
-                decidedDelayWindowSize = mainDelayWindowSize;
-                delayTimeWindow = new double[decidedDelayWindowSize];
-                delayWindowIndex = 0;
-            } else {
-                warmUpCompleteWindowTick -= 1;
-            }
+        } else if(decidedDelayWindowSize == mainDelayWindowSize) {
+            poorMonitoring.checkExceedRegionAndReset();
+            goodMonitoring.checkExceedRegionAndReset();
+        }
+    }
 
-            if(decidedDelayWindowSize == mainDelayWindowSize) {
-                poorMonitoring.checkExceedRegionAndReset();
-                goodMonitoring.checkExceedRegionAndReset();
+    private static void clearScreen(boolean needClearCurses) throws IOException, InterruptedException {
+        if(parameters.ncursesTerminal && needClearCurses) {
+            screen.clear();
+            screen.refresh();
+            return;
+        }
+
+        if (!parameters.ncursesTerminal && parameters.cleanTerminal) {
+            if (parameters.isBufferStream) {
+                printStream.write("\033[H\033[2J");
+                printStream.flush();
+            } else {
+                ProcessBuilder processBuilder = System.getProperty("os.name").contains("Windows") ? new ProcessBuilder("cmd", "/c", "cls") : new ProcessBuilder("clear");
+                Process process = processBuilder.inheritIO().start();
+                process.waitFor();
             }
         }
     }
@@ -444,7 +539,7 @@ public class BadApple {
 
     public static String processFrameIntoString(BufferedImage originImg) {
         StringBuilder textToPrint = new StringBuilder();
-        final String base = "@#&$%*o!;.";
+        final String base = parameters.printColor ? " " : "@#&$%*o!;.";
         int ratioForIndex = parameters.ratioValueResize * 4;
         for (int index = 0; index < originImg.getHeight(); index += ratioForIndex) {
             for (int j = 0; j < originImg.getWidth(); j += parameters.ratioValueResize) {
@@ -468,14 +563,15 @@ public class BadApple {
     public static String processFrameIntoStringUsingEncoder(BufferedImage originImg) throws IOException {
         StringBuilder textToPrint = new StringBuilder();
         BufferedImage img = parameters.reSize ? Thumbnails.of(originImg)
-                .size(originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / parameters.ratioValueResize)
-                .keepAspectRatio(true).asBufferedImage() : originImg;
+                .size( originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / (parameters.ratioValueResize * 4))
+                .keepAspectRatio(false)
+                .asBufferedImage() : originImg;
 
         for (int i = 0; i < img.getHeight(); i++) {
             for (int j = 0; j < img.getWidth(); j++) {
                 Color pixelCol = new Color(img.getRGB(j, i));
                 double pixelVal = (((pixelCol.getRed() * 0.30) + (pixelCol.getBlue() * 0.59) + (pixelCol.getGreen() * 0.11)));
-                if(parameters.printColor) textToPrint.append(colorize(strChar(pixelVal), Attribute.TEXT_COLOR(pixelCol.getRed(), pixelCol.getGreen(), pixelCol.getBlue())));
+                if(parameters.printColor) textToPrint.append(colorize(strChar(pixelVal), Attribute.BACK_COLOR(pixelCol.getRed(), pixelCol.getGreen(), pixelCol.getBlue())));
                 else textToPrint.append(strChar(pixelVal));
             }
             textToPrint.append("\n");
@@ -485,7 +581,7 @@ public class BadApple {
 
     public static String strChar(double g) {
         String str;
-        if (g >= 240) {
+        if (parameters.printColor || g >= 240) {
             str = " ";
         } else if (g >= 210) {
             str = ".";

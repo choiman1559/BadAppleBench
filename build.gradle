@@ -12,6 +12,7 @@ repositories {
 dependencies {
     testImplementation group: 'junit', name: 'junit', version: '4.13.1'
     implementation 'org.bytedeco:javacv-platform:1.5.9'
-    implementation group: 'net.coobird', name: 'thumbnailator', version: '0.4.14'
-    implementation 'com.diogonunes:JColor:5.2.0'
+    implementation group: 'net.coobird', name: 'thumbnailator', version: '0.4.20'
+    implementation 'com.diogonunes:JColor:5.5.1'
+    implementation 'com.googlecode.lanterna:lanterna:3.1.1'
 }
