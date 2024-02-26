@@ -2,30 +2,45 @@
 Playes BadApple in java using JavaCV and FFmpeg.
 
 <pre>
-Usage: <b>BadAppleJava</b> [<font color="#C4A000">-abcehlpqrs</font>] [<font color="#C4A000">-d</font>=<i>&lt;delayMilliseconds&gt;</i>]
-                    [<font color="#C4A000">-dn</font>=<i>&lt;delayNanoseconds&gt;</i>] [<font color="#C4A000">-f</font>=<i>ARCHIVE</i>]
-                    [<font color="#C4A000">-t</font>=<i>&lt;ratioValueResize&gt;</i>]
-Prints ascii-ed &quot;Bad Apple&quot; video.
-  <font color="#C4A000">-a</font>, <font color="#C4A000">--audio</font>           Play mp4 file&apos;s audio
-  <font color="#C4A000">-b</font>, <font color="#C4A000">--buffer-output</font>   use more buffer when print ascii
-  <font color="#C4A000">-c</font>, <font color="#C4A000">--clear</font>           Clear terminal when refresh frame
-  <font color="#C4A000">-d</font>, <font color="#C4A000">--delay</font>=<i>&lt;delayMilliseconds&gt;</i>
-                        Set the delay between frames (milliseconds)
-      <font color="#C4A000">-dn, --delay-nano</font>=<i>&lt;delayNanoseconds&gt;</i>
-                        Set the delay between frames (milliseconds)
-  <font color="#C4A000">-e</font>, <font color="#C4A000">--engine</font>          Convert to Ascii art using my own engine
-  <font color="#C4A000">-f</font>, <font color="#C4A000">--file</font>=<i>ARCHIVE</i>    target *.mp4 file to play
-  <font color="#C4A000">-h</font>, <font color="#C4A000">--help</font>            Display a help message
-  <font color="#C4A000">-l</font>, <font color="#C4A000">--loop</font>            Play video by loop
-  <font color="#C4A000">-p</font>, <font color="#C4A000">--render</font>          Pre-Render the image before play the video
-  <font color="#C4A000">-q</font>, <font color="#C4A000">--print-color</font>     print color as well as ascii texts
-  <font color="#C4A000">-r</font>, <font color="#C4A000">--resize</font>          Set whether or not to resize the image
-  <font color="#C4A000">-s</font>, <font color="#C4A000">--sync</font>            Sync audio with video
-  <font color="#C4A000">-t</font>, <font color="#C4A000">--ratio</font>=<i>&lt;ratioValueResize&gt;</i>
-                        Ratio value when resetting frame size
-                        </pre>
+Usage: BadApple [-abcehlpqrsv] [-ad] [-ar] [-cn] [-bs=<bufferSize>]
+                [-d=<delayMilliseconds>] [-dn=<delayNanoseconds>] [-f=ARCHIVE]
+                [-t=<ratioValueResize>]
+Prints ascii-ed "Bad Apple" video.
+  -a, --audio               Play mp4 file's audio
+      -ad, --auto-delay     (Experimental) Automatically determines delay length
+      -ar, --auto-ratio     (Experimental) Automatically determines downscale
+                              ratio
+  -b, --buffer-output       use more buffer when print ascii
+      -bs, --buffer-size=<bufferSize>
+                            Size of Buffer, Default is 8192 bytes.
+  -c, --clear               Clear terminal when refresh frame
+      -cn, --clear-curses   Clear terminal using ncurses
+  -d, --delay=<delayMilliseconds>
+                            Set the delay between frames (milliseconds)
+      -dn, --delay-nano=<delayNanoseconds>
+                            Set the delay between frames (milliseconds)
+  -e, --engine              Convert to Ascii art using my own engine
+  -f, --file=ARCHIVE        target *.mp4 file to play
+  -h, --help                Display a help message
+  -l, --loop                Play video by loop
+  -p, --pre-render          (Experimental) Pre-Render all the frames to ascii
+                              before play the video (Warning: Requires a lot of
+                              memory)
+  -q, --print-color         print color as well as ascii texts
+  -r, --resize              Set whether or not to resize the image
+  -s, --sync-audio          Sync audio with video
+  -t, --ratio=<ratioValueResize>
+                            Aspect ratio value to downscale frames
+  -v, --verbose             Print debug log under frame while playing video
 
-example:
-`java -jar BadApple.main.jar -t 2 -s=false -d 27 -a=true -e`
+</pre>
 
-<img src="https://i.ibb.co/qnPW1dZ/2021-06-07-12-36-51.png" alt="drawing" width="400"/> <img src="https://i.ibb.co/XYTXbhQ/2021-06-07-12-00-40.png" alt="drawing" width="400"/>
+## Example:
+Command #1: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=3 -d=12 -s=true -q=true -ad=true -ar=false`
+
+![image](https://github.com/choiman1559/BadApple_Java/assets/43315227/8f79c4ca-8480-46bf-80d1-fff27c2c0bd7)
+
+
+Command #2: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=5 -d=12 -s=true -q=true -ad=true -ar=true -f=<Your MP4 File Here>`
+
+![image](https://github.com/choiman1559/BadApple_Java/assets/43315227/2a6b37aa-1470-45ed-888f-6821d533969f)
