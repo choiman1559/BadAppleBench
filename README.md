@@ -1,6 +1,11 @@
 # BadApple_Java
-Playes BadApple in java using JavaCV and FFmpeg.
+Uses JavaCV and FFMPEG to print texted video to the terminal like BadApple. </br>
+It is mainly optimized for outputting BadApple. ~+Rick Roll~
 
+It is recommended that the quality of the original video used is ~720P or lower. </br>
+Also, recommended to play on a terminal emulator (eg. Alacritty) that uses GPU acceleration.
+
+## Usage
 <pre>
 Usage: BadApple [-abcehlpqrsv] [-ad] [-ar] [-cn] [-bs=<bufferSize>]
                 [-d=<delayMilliseconds>] [-dn=<delayNanoseconds>] [-f=ARCHIVE]
@@ -35,12 +40,21 @@ Prints ascii-ed "Bad Apple" video.
 
 </pre>
 
-## Example:
+## Examples
 Command #1: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=3 -d=12 -s=true -q=true -ad=true -ar=false`
+
+Original Video: [Bad Apple!!](https://www.youtube.com/watch?v=i41KoE0iMYU)
 
 ![image](https://github.com/choiman1559/BadApple_Java/assets/43315227/8f79c4ca-8480-46bf-80d1-fff27c2c0bd7)
 
-
+Original Video: [Never Gonna Give You Up](https://www.youtube.com/watch?v=dQw4w9WgXcQ) ~LOL~
+ 
 Command #2: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=5 -d=12 -s=true -q=true -ad=true -ar=true -f=<Your MP4 File Here>`
 
 ![image](https://github.com/choiman1559/BadApple_Java/assets/43315227/2a6b37aa-1470-45ed-888f-6821d533969f)
+
+Command #3: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=4 -d=12 -s=true -q=true -ad=true -ar=false -f=<Your MP4 File Here>`
+
+Original Video: [言って｡](https://youtu.be/F64yFFnZfkI)
+
+![image](https://github.com/choiman1559/BadApple_Java/assets/43315227/f8b31211-8ed5-4806-adec-870534f3de54)
