@@ -28,8 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static com.diogonunes.jcolor.Ansi.colorize;
 
 public class BadApple {
-
-    @picocli.CommandLine.Command(name = "BadAppleJava", helpCommand = true, description = "Prints ascii-ed \"Bad Apple\" video.")
+    static final String BadApple_Version = "2.0.0";
+    @picocli.CommandLine.Command(name = "BadApple", helpCommand = true, description = "Prints ascii-ed \"Bad Apple\" video.")
     static class Parameters {
         @picocli.CommandLine.Option(names = {"-h", "--help"}, usageHelp = true, description = "Display a help message")
         public boolean helpRequested = false;
@@ -784,6 +784,11 @@ public class BadApple {
         if (!parameters.helpRequested) do {
             grabberVideoFramer();
         } while (parameters.playAsLoop);
-        else System.out.print(commandLine.getUsageMessage());
+        else {
+            String helpMessage = String.format("BadApple-Java, Written By.Choiman1559, Version: %s\n", BadApple_Version);
+            helpMessage += commandLine.getUsageMessage();
+
+            System.out.print(helpMessage);
+        }
     }
 }
