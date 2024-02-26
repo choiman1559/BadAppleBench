@@ -104,6 +104,7 @@ public class BadApple {
     static int frameWarmUpCount = 2;
     static long defaultDelayLength;
     static double lastDelay = 0L;
+    static double lastProcessDuration = 0L;
 
     static double videoTotalFrame;
     static double audioTotalFrame;
@@ -367,6 +368,8 @@ public class BadApple {
                 adjustDelay(printStartedTime, textToPrint);
                 if (parameters.autoRatio) {
                     adjustDownSamplingRatio();
+                } else {
+                    collectWindowedAvgDelay();
                 }
             }
         } else {
@@ -381,6 +384,7 @@ public class BadApple {
             }
         }
 
+        lastProcessDuration = System.currentTimeMillis() - printStartedTime;
         if (parameters.syncAudioWithVideo) {
             final double allowableRange = 0.45;
             double currentAudioSecond = audioFrameIndex / audioFrameRate;
@@ -418,10 +422,13 @@ public class BadApple {
             for (double time : delayTimeWindow) {
                 sum += time;
             }
-            double averageProcessingTime = sum / delayTimeWindow.length;
 
-            verbose = String.format(" Delay (ms): %.5f, Ratio: %s, Fps: %.5f\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Window: %d, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s), Perfect: (Threshold: %s, Count: %s)\n",
-                    lastDelay, parameters.ratioValueResize, (1000 / lastDelay),
+            double averageProcessingTime = sum / delayTimeWindow.length;
+            String fpsString = String.format("%.2f     ", 1000 / lastProcessDuration);
+            fpsString = fpsString.equals("Infinity") ? "0.0" : fpsString;
+
+            verbose = String.format(" Delay (ms): %.2f, Ratio: %s, Fps: %s\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Window: %d, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s), Perfect: (Threshold: %s, Count: %s)\n",
+                    lastDelay, parameters.ratioValueResize, fpsString,
                     lines.length, lines[0].length(), textToPrint.length(),
                     videoInSecond, audioInSecond, audioInSecond - videoInSecond,
 
@@ -452,6 +459,17 @@ public class BadApple {
             Thread.sleep((long) delay);
         }
         lastDelay = delay;
+    }
+
+    private static void collectWindowedAvgDelay() {
+        if(decidedDelayWindowSize == warmUpDelayWindowSize) {
+            decidedDelayWindowSize = mainDelayWindowSize;
+            delayWindowIndex = 0;
+            delayTimeWindow = new double[decidedDelayWindowSize];
+        }
+
+        delayTimeWindow[delayWindowIndex] = lastDelay;
+        delayWindowIndex = (delayWindowIndex + 1) % decidedDelayWindowSize;
     }
 
     private static void adjustDownSamplingRatio() throws IOException, InterruptedException {
