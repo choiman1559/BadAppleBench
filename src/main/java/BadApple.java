@@ -96,13 +96,17 @@ public class BadApple {
     static Parameters parameters;
     static ArrayList<String> frameList = new ArrayList<>();
     static Thread audioThread;
+    static Exception videoProcessThreadException;
     static final AtomicBoolean audioWaitLonger = new AtomicBoolean();
-    static final Object audioLock = new Object ();
+    static final Object audioLock = new Object();
 
     static boolean isFirstFrame = true;
     static int frameWarmUpCount = 2;
     static long defaultDelayLength;
     static double lastDelay = 0L;
+
+    static double videoTotalFrame;
+    static double audioTotalFrame;
 
     static int videoFrameIndex;
     static int audioFrameIndex;
@@ -132,7 +136,7 @@ public class BadApple {
             if (!withinMonitoredRegion) {
                 monitoredRegionsStartFrames = videoFrameIndex;
                 withinMonitoredRegion = true;
-            } else if(videoFrameIndex - monitoredRegionsStartFrames < monitoredRegionsThreshold){
+            } else if (videoFrameIndex - monitoredRegionsStartFrames < monitoredRegionsThreshold) {
                 performanceCount -= 1;
             }
         }
@@ -154,7 +158,7 @@ public class BadApple {
     static RegionsMonitoringObject poorMonitoring = new RegionsMonitoringObject();
     static RegionsMonitoringObject goodMonitoring = new RegionsMonitoringObject();
 
-    public static void grabberVideoFramer() throws IOException, LineUnavailableException, InterruptedException {
+    public static void grabberVideoFramer() throws Exception {
         Frame frame;
         URL resource = parameters.inputFile != null && parameters.inputFile.exists() ? parameters.inputFile.toURI().toURL() : BadApple.class.getResource("BadApple.mp4");
         if (resource == null) {
@@ -182,7 +186,7 @@ public class BadApple {
                 .createTerminal();
         screen = new TerminalScreen(terminal);
 
-        if(parameters.ncursesTerminal) {
+        if (parameters.ncursesTerminal) {
             terminal.setCursorVisible(false);
             screen.startScreen();
         }
@@ -190,12 +194,12 @@ public class BadApple {
         defaultDelayLength = (long) (1000 / fFmpegFrameGrabber.getFrameRate());
         videoFrameIndex = 0;
 
-        if(parameters.autoRatio) {
+        if (parameters.autoRatio) {
             parameters.ratioValueResize = 1;
         }
 
-        double videoTotalFrame = fFmpegFrameGrabber.getLengthInFrames();
-        double audioTotalFrame = audioGrabber.getLengthInAudioFrames();
+        videoTotalFrame = fFmpegFrameGrabber.getLengthInFrames();
+        audioTotalFrame = audioGrabber.getLengthInAudioFrames();
 
         videoFrameRate = fFmpegFrameGrabber.getVideoFrameRate();
         audioFrameRate = audioGrabber.getAudioFrameRate();
@@ -216,40 +220,48 @@ public class BadApple {
         System.out.println("Start running video extraction frame, it takes a long time");
 
         initAudioThread(audioGrabber, sampleFormat, sourceDataLine);
-        if(!parameters.usePreRender && parameters.playAudio) {
+        if (!parameters.usePreRender && parameters.playAudio) {
             audioThread.start();
         }
 
         while (videoFrameIndex <= videoTotalFrame) {
             long printStartedTime = System.currentTimeMillis();
-            videoFrameIndex++;
             frame = fFmpegFrameGrabber.grabImage();
+            videoFrameIndex++;
 
-            String textToPrint = "";
-            if (frame != null) {
-                BufferedImage originImg = FrameToBufferedImage(frame);
-                if(originImg == null) continue;
-
-                if (parameters.useInnerEngine) {
-                    textToPrint = processFrameIntoString(originImg);
-                } else {
-                    textToPrint = processFrameIntoStringUsingEncoder(originImg);
+            Frame finalFrame = frame;
+            Thread mainProcessThread = new Thread(() -> {
+                try {
+                    processVideoFrame(printStartedTime, finalFrame);
+                } catch (IOException | InterruptedException e) {
+                    videoProcessThreadException = e;
                 }
-            }
+            });
 
-            if(parameters.usePreRender) {
-                frameList.add(textToPrint);
-            } else {
-                printAndWaitFrame(textToPrint, printStartedTime);
+            mainProcessThread.start();
+            while (true) {
+                if(videoProcessThreadException != null) {
+                    throw videoProcessThreadException;
+                }
+
+                if(!mainProcessThread.isAlive()) {
+                    break;
+                }
+
+                if(System.currentTimeMillis() - printStartedTime >= defaultDelayLength * 3) {
+                    mainProcessThread.interrupt();
+                    poorMonitoring.calculateRegion();
+                    break;
+                }
             }
         }
 
-        if(parameters.usePreRender) {
-            if(parameters.playAudio) {
+        if (parameters.usePreRender) {
+            if (parameters.playAudio) {
                 audioThread.start();
             }
 
-            for(String textToPrint: frameList) {
+            for (String textToPrint : frameList) {
                 long printStartedTime = System.currentTimeMillis();
                 printAndWaitFrame(textToPrint, printStartedTime);
             }
@@ -266,7 +278,7 @@ public class BadApple {
             System.out.println("============End of operation============");
             printStream.close();
 
-            if(parameters.ncursesTerminal) {
+            if (parameters.ncursesTerminal) {
                 clearScreen(true);
                 screen.stopScreen();
                 terminal.close();
@@ -290,21 +302,41 @@ public class BadApple {
         }
     }
 
+    private static void processVideoFrame(long printStartedTime, Frame frame) throws IOException, InterruptedException {
+        String textToPrint = "";
+        if (frame != null) {
+            BufferedImage originImg = FrameToBufferedImage(frame);
+            if (originImg != null) {
+                if (parameters.useInnerEngine) {
+                    textToPrint = processFrameIntoString(originImg);
+                } else {
+                    textToPrint = processFrameIntoStringUsingEncoder(originImg);
+                }
+            }
+
+            if (parameters.usePreRender) {
+                frameList.add(textToPrint);
+            } else {
+                printAndWaitFrame(textToPrint, printStartedTime);
+            }
+        }
+    }
+
     private static void printAndWaitFrame(String textToPrint, long printStartedTime) throws IOException, InterruptedException {
         clearScreen(false);
         String[] lines = textToPrint.split(System.lineSeparator());
         String verbose = getVerbose(textToPrint, lines);
 
-        if(parameters.ncursesTerminal) {
+        if (parameters.ncursesTerminal) {
             TextGraphics textGraphics = screen.newTextGraphics();
-            for(int i = 0; i < lines.length; i++) {
+            for (int i = 0; i < lines.length; i++) {
                 String line = lines[i];
                 textGraphics.putCSIStyledString(0, i, line);
             }
 
-            if(!verbose.isEmpty()) {
+            if (!verbose.isEmpty()) {
                 String[] verboseLines = verbose.split(System.lineSeparator());
-                for(int i = 0;i < verboseLines.length; i++) {
+                for (int i = 0; i < verboseLines.length; i++) {
                     String line = verboseLines[i];
                     textGraphics.putString(0, i + lines.length, line);
                 }
@@ -312,7 +344,7 @@ public class BadApple {
 
             screen.refresh();
         } else {
-            if(!verbose.isEmpty()) {
+            if (!verbose.isEmpty()) {
                 textToPrint += verbose;
             }
 
@@ -324,16 +356,16 @@ public class BadApple {
             }
         }
 
-        if(parameters.autoDelay) {
-            if(isFirstFrame) {
+        if (parameters.autoDelay) {
+            if (isFirstFrame) {
                 isFirstFrame = false;
                 frameWarmUpCount -= 1;
-            } else if(frameWarmUpCount > 0) {
+            } else if (frameWarmUpCount > 0) {
                 frameWarmUpCount -= 1;
                 adjustDelay(printStartedTime, textToPrint);
             } else {
                 adjustDelay(printStartedTime, textToPrint);
-                if(parameters.autoRatio) {
+                if (parameters.autoRatio) {
                     adjustDownSamplingRatio();
                 }
             }
@@ -349,26 +381,26 @@ public class BadApple {
             }
         }
 
-        if(parameters.syncAudioWithVideo) {
+        if (parameters.syncAudioWithVideo) {
             final double allowableRange = 0.45;
-            double currentAudioSecond = audioFrameIndex / audioFrameRate ;
-            double currentVideoSecond = videoFrameIndex / videoFrameRate ;
+            double currentAudioSecond = audioFrameIndex / audioFrameRate;
+            double currentVideoSecond = videoFrameIndex / videoFrameRate;
             double syncDiff = currentAudioSecond - currentVideoSecond;
 
-            if(syncDiff > allowableRange) {
+            if (syncDiff > allowableRange) {
                 audioSyncStatement = SYNC_AUDIO_FAST;
-                if(syncDiff > allowableRange * 2) synchronized (audioLock) {
-                    if(!audioWaitLonger.get()) {
+                if (syncDiff > allowableRange * 2) synchronized (audioLock) {
+                    if (!audioWaitLonger.get()) {
                         audioWaitLonger.set(true);
                         audioLock.notify();
                     }
                 }
-            } else if(syncDiff * -1 > allowableRange) {
+            } else if (syncDiff * -1 > allowableRange) {
                 audioSyncStatement = SYNC_VIDEO_FAST;
                 Thread.sleep((long) ((currentVideoSecond - currentAudioSecond) * 3));
-            } else if(syncDiff <= allowableRange) {
+            } else if (syncDiff <= allowableRange) {
                 audioSyncStatement = SYNC_FIT;
-                if(audioWaitLonger.get()) synchronized (audioLock) {
+                if (audioWaitLonger.get()) synchronized (audioLock) {
                     audioWaitLonger.set(false);
                     audioLock.notify();
                 }
@@ -378,7 +410,7 @@ public class BadApple {
 
     private static String getVerbose(String textToPrint, String[] lines) {
         String verbose = "";
-        if(parameters.autoDelay && parameters.verbose) {
+        if (parameters.autoDelay && parameters.verbose) {
             double videoInSecond = videoFrameIndex / videoFrameRate;
             double audioInSecond = audioFrameIndex / audioFrameRate;
 
@@ -386,7 +418,7 @@ public class BadApple {
             for (double time : delayTimeWindow) {
                 sum += time;
             }
-            double averageProcessingTime =  sum / delayTimeWindow.length;
+            double averageProcessingTime = sum / delayTimeWindow.length;
 
             verbose = String.format(" Delay (ms): %.5f, Ratio: %s, Fps: %.5f\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Window: %d, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s), Perfect: (Threshold: %s, Count: %s)\n",
                     lastDelay, parameters.ratioValueResize, (1000 / lastDelay),
@@ -402,9 +434,9 @@ public class BadApple {
 
     private static void adjustDelay(long printStartedTime, String textToPrint) throws InterruptedException {
         double delay = defaultDelayLength - (System.currentTimeMillis() - printStartedTime);
-        if(delay >= 0) {
+        if (delay >= 0) {
             double delayMargin = (textToPrint.length() * (parameters.printColor ? 0.000006 : 0.000003));
-            if(delay > delayMargin) switch (audioSyncStatement) {
+            if (delay > delayMargin) switch (audioSyncStatement) {
                 case SYNC_AUDIO_FAST:
                     delay -= delayMargin;
                     break;
@@ -423,12 +455,12 @@ public class BadApple {
     }
 
     private static void adjustDownSamplingRatio() throws IOException, InterruptedException {
-        if(decidedDelayWindowSize == mainDelayWindowSize) {
+        if (decidedDelayWindowSize == mainDelayWindowSize) {
             perfectCount += 1;
-            if(perfectCount >= perfectCountThreshold) {
+            if (perfectCount >= perfectCountThreshold) {
                 parameters.autoRatio = false;
             }
-        } else if(warmUpCompleteWindowTick > 0) {
+        } else if (warmUpCompleteWindowTick > 0) {
             warmUpCompleteWindowTick -= 1;
         } else {
             decidedDelayWindowSize = mainDelayWindowSize;
@@ -447,14 +479,14 @@ public class BadApple {
         for (double time : delayTimeWindow) {
             sum += time;
         }
-        double averageProcessingTime =  sum / delayTimeWindow.length;
+        double averageProcessingTime = sum / delayTimeWindow.length;
 
         if (lastDelay < 0 || averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.99) {
-            if(decidedDelayWindowSize == mainDelayWindowSize) {
+            if (decidedDelayWindowSize == mainDelayWindowSize) {
                 poorMonitoring.calculateRegion();
                 goodMonitoring.resetRegion();
 
-                if(poorMonitoring.performanceCount <= 0) {
+                if (poorMonitoring.performanceCount <= 0) {
                     delayTimeWindow = new double[decidedDelayWindowSize];
                     delayWindowIndex = 0;
                     poorMonitoring.resetRegion();
@@ -471,11 +503,11 @@ public class BadApple {
                 clearScreen(true);
             }
         } else if (parameters.ratioValueResize > 1 && averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.3) {
-            if(decidedDelayWindowSize == mainDelayWindowSize) {
+            if (decidedDelayWindowSize == mainDelayWindowSize) {
                 goodMonitoring.calculateRegion();
                 poorMonitoring.resetRegion();
 
-                if(goodMonitoring.performanceCount <= 0) {
+                if (goodMonitoring.performanceCount <= 0) {
                     delayTimeWindow = new double[decidedDelayWindowSize];
                     delayWindowIndex = 0;
 
@@ -485,14 +517,14 @@ public class BadApple {
                     perfectCount = 0;
                 }
             }
-        } else if(decidedDelayWindowSize == mainDelayWindowSize) {
+        } else if (decidedDelayWindowSize == mainDelayWindowSize) {
             poorMonitoring.checkExceedRegionAndReset();
             goodMonitoring.checkExceedRegionAndReset();
         }
     }
 
     private static void clearScreen(boolean needClearCurses) throws IOException, InterruptedException {
-        if(parameters.ncursesTerminal && needClearCurses) {
+        if (parameters.ncursesTerminal && needClearCurses) {
             screen.clear();
             screen.refresh();
             return;
@@ -511,14 +543,14 @@ public class BadApple {
     }
 
     private static void initAudioThread(FFmpegFrameGrabber audioGrabber, int sampleFormat, SourceDataLine sourceDataLine) {
-        if(audioThread == null || !audioThread.isAlive()) audioThread = new Thread(() -> {
+        if (audioThread == null || !audioThread.isAlive()) audioThread = new Thread(() -> {
             audioFrameIndex = 0;
             int audioFtp = audioGrabber.getLengthInAudioFrames();
 
             while (audioFrameIndex <= audioFtp) {
                 synchronized (audioLock) {
                     try {
-                        if(audioWaitLonger.get()) {
+                        if (audioWaitLonger.get()) {
                             audioLock.wait();
                         }
                     } catch (InterruptedException e) {
@@ -528,7 +560,10 @@ public class BadApple {
                 }
 
                 try {
-                    processAudio(audioGrabber.grabSamples().samples, sampleFormat, sourceDataLine);
+                    Frame sample = audioGrabber.grabSamples();
+                    if(sample != null) {
+                        processAudio(sample.samples, sampleFormat, sourceDataLine);
+                    }
                 } catch (FFmpegFrameGrabber.Exception e) {
                     System.out.println("Error while processing audio:" + e.getMessage());
                 }
@@ -551,7 +586,7 @@ public class BadApple {
                 int indexBase = Math.round(gray * (base.length() + 1) / 255);
 
                 String text = indexBase >= base.length() ? " " : String.valueOf(base.charAt(indexBase));
-                if(parameters.printColor) textToPrint.append(colorize(text, Attribute.BACK_COLOR(red, green, blue)));
+                if (parameters.printColor) textToPrint.append(colorize(text, Attribute.BACK_COLOR(red, green, blue)));
                 else textToPrint.append(text);
             }
             textToPrint.append("\r\n");
@@ -563,7 +598,7 @@ public class BadApple {
     public static String processFrameIntoStringUsingEncoder(BufferedImage originImg) throws IOException {
         StringBuilder textToPrint = new StringBuilder();
         BufferedImage img = parameters.reSize ? Thumbnails.of(originImg)
-                .size( originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / (parameters.ratioValueResize * 4))
+                .size(originImg.getWidth() / parameters.ratioValueResize, originImg.getHeight() / (parameters.ratioValueResize * 4))
                 .keepAspectRatio(false)
                 .asBufferedImage() : originImg;
 
@@ -571,7 +606,8 @@ public class BadApple {
             for (int j = 0; j < img.getWidth(); j++) {
                 Color pixelCol = new Color(img.getRGB(j, i));
                 double pixelVal = (((pixelCol.getRed() * 0.30) + (pixelCol.getBlue() * 0.59) + (pixelCol.getGreen() * 0.11)));
-                if(parameters.printColor) textToPrint.append(colorize(strChar(pixelVal), Attribute.BACK_COLOR(pixelCol.getRed(), pixelCol.getGreen(), pixelCol.getBlue())));
+                if (parameters.printColor)
+                    textToPrint.append(colorize(strChar(pixelVal), Attribute.BACK_COLOR(pixelCol.getRed(), pixelCol.getGreen(), pixelCol.getBlue())));
                 else textToPrint.append(strChar(pixelVal));
             }
             textToPrint.append("\n");
@@ -728,12 +764,12 @@ public class BadApple {
         return af;
     }
 
-    public static void main(String[] args) throws IOException, InterruptedException, LineUnavailableException {
+    public static void main(String[] args) throws Exception {
         parameters = new Parameters();
         picocli.CommandLine commandLine = new picocli.CommandLine(parameters);
         commandLine.setUnmatchedArgumentsAllowed(false).parseArgs(args);
         if (parameters.inputFile != null) {
-            if(!parameters.inputFile.canRead()) {
+            if (!parameters.inputFile.canRead()) {
                 System.out.println("File Cannot be read: " + parameters.inputFile.getName());
                 System.exit(-1);
             }
