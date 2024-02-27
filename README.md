@@ -1,4 +1,4 @@
-# BadApple_Java
+# BadAppleMark
 Uses JavaCV and FFMPEG to print texted video to the terminal like BadApple. </br>
 It is mainly optimized for outputting BadApple. ~+Rick Roll~
 
