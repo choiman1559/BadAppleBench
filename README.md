@@ -1,9 +1,26 @@
 # BadAppleMark
-Uses JavaCV and FFMPEG to print texted video to the terminal like BadApple. </br>
-It is mainly optimized for outputting BadApple. ~+Rick Roll~
+
+`Bad Apple!! + BenchMark`
+
+Play a video file converted to text using JavaCV and FFMPEG in the terminal </br>
+to benchmark the performance of the terminal emulator. </br>
+It is mainly optimized for outputting BadApple. ~+Rick Roll~ </br>
 
 It is recommended that the quality of the original video used is ~720P or lower. </br>
 Also, recommended to play on a terminal emulator (eg. Alacritty) that uses GPU acceleration.
+
+## Requirement
+
+Minimum requirement:
+ - Sound output device that supports MPEG AAC audio codec
+ - Terminal emulator that supports ANSI text-ed color
+ - Java 8+ Runtime
+ - 1GB or more of free memory
+
+Recommended requirement:
+ - Processor with 4 or more threads
+ - 2GB or more of free memory
+ - Terminal emulator with GPU acceleration
 
 ## Usage
 <pre>
