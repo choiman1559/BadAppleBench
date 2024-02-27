@@ -2,12 +2,8 @@
 
 `Bad Apple!! + BenchMark`
 
-Play a video file converted to text using JavaCV and FFMPEG in the terminal </br>
-to benchmark the performance of the terminal emulator. </br>
-It is mainly optimized for outputting BadApple. ~+Rick Roll~ </br>
-
-It is recommended that the quality of the original video used is ~720P or lower. </br>
-Also, recommended to play on a terminal emulator (eg. Alacritty) that uses GPU acceleration.
+Play a video file converted to text using JavaCV and FFMPEG in the terminal to benchmark the performance of the terminal emulator. </br>
+It is recommended that the quality of the original video used is 720P or lower. </br>
 
 ## Requirement
 
