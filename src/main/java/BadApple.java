@@ -1,11 +1,10 @@
-import com.diogonunes.jcolor.Attribute;
 import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.swing.TerminalEmulatorDeviceConfiguration;
-import net.coobird.thumbnailator.Thumbnails;
+
 import org.bytedeco.ffmpeg.global.avutil;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.Frame;
@@ -22,71 +21,91 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.text.SimpleDateFormat;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import net.coobird.thumbnailator.Thumbnails;
+import com.diogonunes.jcolor.Attribute;
+import org.knowm.xchart.*;
+import org.knowm.xchart.style.Styler;
+import org.knowm.xchart.style.markers.SeriesMarkers;
+import picocli.CommandLine;
 
 import static com.diogonunes.jcolor.Ansi.colorize;
 
 public class BadApple {
-    static final String BadApple_Version = "2.0.0";
-    @picocli.CommandLine.Command(name = "BadApple", helpCommand = true, description = "Prints ascii-ed \"Bad Apple\" video.")
+    static final String BadApple_Version = "2.1.0";
+
+    @CommandLine.Command(name = "BadApple", helpCommand = true, description = "Prints ascii-ed \"Bad Apple\" video.")
     static class Parameters {
-        @picocli.CommandLine.Option(names = {"-h", "--help"}, usageHelp = true, description = "Display a help message")
+        @CommandLine.Option(names = {"-h", "--help"}, usageHelp = true, description = "Display a help message")
         public boolean helpRequested = false;
 
-        @picocli.CommandLine.Option(names = {"-v", "--verbose"}, description = "Print debug log under frame while playing video")
+        @CommandLine.Option(names = {"-v", "--verbose"}, description = "Print debug log under frame while playing video")
         public boolean verbose = false;
 
-        @picocli.CommandLine.Option(names = {"-r", "--resize"}, description = "Set whether or not to resize the image")
+        @CommandLine.Option(names = {"-r", "--resize"}, description = "Set whether to resize the image")
         public boolean reSize = true;
 
-        @picocli.CommandLine.Option(names = {"-c", "--clear"}, description = "Clear terminal when refresh frame")
+        @CommandLine.Option(names = {"-c", "--clear"}, description = "Clear terminal when refresh frame")
         public boolean cleanTerminal = false;
 
-        @picocli.CommandLine.Option(names = {"-cn", "--clear-curses"}, description = "Clear terminal using ncurses")
+        @CommandLine.Option(names = {"-cn", "--clear-curses"}, description = "Clear terminal using ncurses")
         public boolean ncursesTerminal = false;
 
-        @picocli.CommandLine.Option(names = {"-d", "--delay"}, description = "Set the delay between frames (milliseconds)")
+        @CommandLine.Option(names = {"-d", "--delay"}, description = "Set the delay between frames (milliseconds)")
         public long delayMilliseconds = 26;
 
-        @picocli.CommandLine.Option(names = {"-dn", "--delay-nano"}, description = "Set the delay between frames (milliseconds)")
+        @CommandLine.Option(names = {"-dn", "--delay-nano"}, description = "Set the delay between frames (milliseconds)")
         public long delayNanoseconds = -1;
 
-        @picocli.CommandLine.Option(names = {"-ad", "--auto-delay"}, description = "(Experimental) Automatically determines delay length")
+        @CommandLine.Option(names = {"-ad", "--auto-delay"}, description = "(Experimental) Automatically determines delay length")
         public boolean autoDelay = false;
 
-        @picocli.CommandLine.Option(names = {"-ar", "--auto-ratio"}, description = "(Experimental) Automatically determines downscale ratio")
+        @CommandLine.Option(names = {"-ar", "--auto-ratio"}, description = "(Experimental) Automatically determines downscale ratio")
         public boolean autoRatio = false;
 
-        @picocli.CommandLine.Option(names = {"-t", "--ratio"}, description = "Aspect ratio value to downscale frames")
+        @CommandLine.Option(names = {"-t", "--ratio"}, description = "Aspect ratio value to downscale frames")
         public int ratioValueResize = 1;
 
-        @picocli.CommandLine.Option(names = {"-a", "--audio"}, description = "Play mp4 file's audio")
+        @CommandLine.Option(names = {"-a", "--audio"}, description = "Play mp4 file's audio")
         public boolean playAudio = false;
 
-        @picocli.CommandLine.Option(names = {"-l", "--loop"}, description = "Play video by loop")
+        @CommandLine.Option(names = {"-l", "--loop"}, description = "Play video by loop")
         public boolean playAsLoop = false;
 
-        @picocli.CommandLine.Option(names = {"-s", "--sync-audio"}, description = "Sync audio with video")
+        @CommandLine.Option(names = {"-s", "--sync-audio"}, description = "Sync audio with video")
         public boolean syncAudioWithVideo = false;
 
-        @picocli.CommandLine.Option(names = {"-e", "--engine"}, description = "Convert to Ascii art using my own engine")
+        @CommandLine.Option(names = {"-e", "--engine"}, description = "Convert to Ascii art using my own engine")
         public boolean useInnerEngine = false;
 
-        @picocli.CommandLine.Option(names = {"-p", "--pre-render"}, description = "(Experimental) Pre-Render all the frames to ascii before play the video (Warning: Requires a lot of memory)")
+        @CommandLine.Option(names = {"-p", "--pre-render"}, description = "(Experimental) Pre-Render all the frames to ascii before play the video (Warning: Requires a lot of memory)")
         public boolean usePreRender = false;
 
-        @picocli.CommandLine.Option(names = {"-f", "--file"}, paramLabel = "ARCHIVE", description = "target *.mp4 file to play")
+        @CommandLine.Option(names = {"-f", "--file"}, paramLabel = "ARCHIVE", description = "target *.mp4 file to play")
         public File inputFile = null;
 
-        @picocli.CommandLine.Option(names = {"-b", "--buffer-output"}, description = "use more buffer when print ascii")
+        @CommandLine.Option(names = {"-b", "--buffer-output"}, description = "use more buffer when print ascii")
         public boolean isBufferStream = true;
 
-        @picocli.CommandLine.Option(names = {"-bs", "--buffer-size"}, description = "Size of Buffer, Default is 8192 bytes.")
+        @CommandLine.Option(names = {"-bs", "--buffer-size"}, description = "Size of Buffer, Default is 8192 bytes.")
         public int bufferSize = 8192;
 
-        @picocli.CommandLine.Option(names = {"-q", "--print-color"}, description = "print color as well as ascii texts")
+        @CommandLine.Option(names = {"-q", "--print-color"}, description = "print color as well as ascii texts")
         public boolean printColor = false;
+
+        @CommandLine.Option(names = {"-m", "--benchmark"}, description = "Record and measure the performance of terminal emulators.")
+        public boolean benchPerformance = false;
+
+        @CommandLine.Option(names = {"-mo", "--bench-output"}, paramLabel = "ARCHIVE", description = "Destination folder to save analysis results")
+        public File benchOutputFile = null;
     }
 
     static Terminal terminal;
@@ -94,6 +113,7 @@ public class BadApple {
     static BufferedWriter printStream;
 
     static Parameters parameters;
+    static String commandString;
     static ArrayList<String> frameList = new ArrayList<>();
     static Thread audioThread;
     static Exception videoProcessThreadException;
@@ -156,8 +176,36 @@ public class BadApple {
 
     static int perfectCount;
     static int perfectCountThreshold;
+    static int downScaleCount = 0;
+    static int upScaleCount = 0;
     static RegionsMonitoringObject poorMonitoring = new RegionsMonitoringObject();
     static RegionsMonitoringObject goodMonitoring = new RegionsMonitoringObject();
+
+    static class AnalysisObject {
+        public final int videoFrameIndex;
+        public long totalFrameStringLength = 0L;
+
+        public int downscaleRatio = 0;
+        public double videoTime = 0L;
+        public double audioTime = 0L;
+        public double diffAudioSync = 0L;
+
+        public boolean isWarmUpFrame = false;
+        public boolean isSkipped = false;
+        public boolean isPoor = false;
+        public boolean isGood = false;
+
+        public double uniqueDelay = 0L;
+        public double windowAvgDelay = 0L;
+        public double currentFrameRate = 0L;
+
+        public AnalysisObject(int videoFrameIndex) {
+            this.videoFrameIndex = videoFrameIndex;
+        }
+    }
+
+    static ArrayList<AnalysisObject> analysisArray = new ArrayList<>();
+    static AnalysisObject currentAnalysisObject;
 
     public static void grabberVideoFramer() throws Exception {
         Frame frame;
@@ -165,6 +213,18 @@ public class BadApple {
         if (resource == null) {
             System.out.println("Error: target resource uri is Null!");
             throw new NullPointerException("target resource uri is Null!");
+        }
+
+        if (parameters.benchOutputFile != null) {
+            if (!parameters.benchOutputFile.exists()) {
+                System.out.println("Error: target benchmark output folder is not exists!");
+                throw new FileNotFoundException("Target benchmark output folder is not exists");
+            }
+
+            if (!parameters.benchOutputFile.isDirectory()) {
+                System.out.println("Error: target benchmark output target is not folder!");
+                throw new IllegalArgumentException("Target benchmark output target is not folder");
+            }
         }
 
         FFmpegFrameGrabber fFmpegFrameGrabber = new FFmpegFrameGrabber(resource.openStream());
@@ -180,14 +240,15 @@ public class BadApple {
         sourceDataLine.open(af);
         sourceDataLine.start();
 
-        OutputStream outputStream = new FileOutputStream(java.io.FileDescriptor.out);
+        OutputStream outputStream = new FileOutputStream(FileDescriptor.out);
         printStream = new BufferedWriter(new OutputStreamWriter(outputStream, StandardCharsets.US_ASCII), parameters.bufferSize);
-        terminal = new DefaultTerminalFactory(System.out, System.in, StandardCharsets.US_ASCII)
-                .setTerminalEmulatorDeviceConfiguration(TerminalEmulatorDeviceConfiguration.getDefault().withCursorBlinking(false))
-                .createTerminal();
-        screen = new TerminalScreen(terminal);
 
         if (parameters.ncursesTerminal) {
+            terminal = new DefaultTerminalFactory(System.out, System.in, StandardCharsets.US_ASCII)
+                    .setTerminalEmulatorDeviceConfiguration(TerminalEmulatorDeviceConfiguration.getDefault().withCursorBlinking(false))
+                    .createTerminal();
+            screen = new TerminalScreen(terminal);
+
             terminal.setCursorVisible(false);
             screen.startScreen();
         }
@@ -229,6 +290,7 @@ public class BadApple {
             long printStartedTime = System.currentTimeMillis();
             frame = fFmpegFrameGrabber.grabImage();
             videoFrameIndex++;
+            currentAnalysisObject = new AnalysisObject(videoFrameIndex);
 
             Frame finalFrame = frame;
             Thread mainProcessThread = new Thread(() -> {
@@ -241,19 +303,24 @@ public class BadApple {
 
             mainProcessThread.start();
             while (true) {
-                if(videoProcessThreadException != null) {
+                if (videoProcessThreadException != null) {
                     throw videoProcessThreadException;
                 }
 
-                if(!mainProcessThread.isAlive()) {
+                if (!mainProcessThread.isAlive()) {
                     break;
                 }
 
-                if(System.currentTimeMillis() - printStartedTime >= defaultDelayLength * 3) {
+                if (System.currentTimeMillis() - printStartedTime >= defaultDelayLength * 3) {
                     mainProcessThread.interrupt();
                     poorMonitoring.calculateRegion();
+                    currentAnalysisObject.isSkipped = true;
                     break;
                 }
+            }
+
+            if (parameters.benchPerformance) {
+                analysisArray.add(currentAnalysisObject);
             }
         }
 
@@ -276,14 +343,18 @@ public class BadApple {
 
         fFmpegFrameGrabber.stop();
         if (!parameters.playAsLoop) {
-            System.out.println("============End of operation============");
-            printStream.close();
-
             if (parameters.ncursesTerminal) {
                 clearScreen(true);
                 screen.stopScreen();
                 terminal.close();
             }
+
+            if (parameters.benchPerformance) {
+                calculateBenchMark();
+            }
+
+            System.out.println("============ End of operation ============");
+            printStream.close();
         } else {
             isFirstFrame = true;
             frameWarmUpCount = 2;
@@ -300,7 +371,279 @@ public class BadApple {
 
             poorMonitoring = new RegionsMonitoringObject();
             goodMonitoring = new RegionsMonitoringObject();
+
+            upScaleCount = 0;
+            downScaleCount = 0;
         }
+    }
+
+    private static void calculateBenchMark() throws IOException, NoSuchAlgorithmException {
+        System.out.println("============ Started to write benchmark analysis results... ============");
+
+        /*
+          BenchMarking Formula (V.2.1.0)
+          final_score =  s_advantage - s_disadvantage
+
+          s_graphic = Harmonic_Mean(length / 1000 * frame)
+          s_advantage = ((1 + (main_frame_gap / total_frame_count) * 100) * s_graphic)
+          s_disadvantage = Harmonic_Mean((1 + ((down - up) / 1000) * s_delay)
+          s_delay = (win_delay * ratio * 10)
+        */
+
+        int mainGoodGapFrameCount = 0;
+        ArrayList<Double> meaningfulFrameRateArray = new ArrayList<>();
+        ArrayList<Double> graphicScoreArray = new ArrayList<>();
+        ArrayList<Double> delayScoreArray = new ArrayList<>();
+
+        double[] frameCountArray = new double[analysisArray.size() - 2];
+        double[] frameRateArray = new double[analysisArray.size() - 2];
+        double[] downScaleRatioArray = new double[analysisArray.size() - 2];
+
+        ArrayList<double[]> goodArray = new ArrayList<>();
+        ArrayList<double[]> poorArray = new ArrayList<>();
+        ArrayList<double[]> skipArray = new ArrayList<>();
+
+        ArrayList<double[]> warmupArray = new ArrayList<>();
+        ArrayList<double[]> delayArray = new ArrayList<>();
+        ArrayList<double[]> avgDelayArray = new ArrayList<>();
+
+        ArrayList<double[]> audioSyncArray = new ArrayList<>();
+        ArrayList<double[]> frameLengthArray = new ArrayList<>();
+
+        XYChart frameChart = new XYChartBuilder()
+                .width(1500).height(1000)
+                .theme(Styler.ChartTheme.Matlab)
+                .title(getChartTitle("FPS-Related Data"))
+                .xAxisTitle("Frame Count")
+                .build();
+
+        frameChart.addSeries("Frame Rate", frameCountArray, frameRateArray).setMarker(SeriesMarkers.NONE);
+        frameChart.addSeries("Downscale Ratio", downScaleRatioArray).setMarker(SeriesMarkers.NONE);
+
+        for (int i = 1; i < analysisArray.size() - 2; i++) {
+            AnalysisObject analysisObject = analysisArray.get(i);
+            frameCountArray[i] = i;
+
+            frameRateArray[i] = analysisObject.currentFrameRate;
+            downScaleRatioArray[i] = analysisObject.downscaleRatio;
+            checkDoubleInfinityAndCorrect(frameRateArray, i);
+
+            if (analysisObject.uniqueDelay > 0) {
+                delayArray.add(new double[]{i, analysisObject.uniqueDelay});
+            } else {
+                delayArray.add(new double[]{i, 0});
+            }
+
+            if (analysisObject.windowAvgDelay > 0) {
+                avgDelayArray.add(new double[]{i, analysisObject.windowAvgDelay});
+            } else {
+                avgDelayArray.add(new double[]{i, 0});
+            }
+
+            if (analysisObject.isGood) {
+                goodArray.add(new double[]{i, downScaleRatioArray[i]});
+            }
+
+            if (analysisObject.isPoor) {
+                poorArray.add(new double[]{i, downScaleRatioArray[i]});
+            }
+
+            if (analysisObject.isSkipped) {
+                skipArray.add(new double[]{i, downScaleRatioArray[i]});
+            }
+
+            audioSyncArray.add(new double[]{i, analysisObject.diffAudioSync});
+            frameLengthArray.add(new double[]{i, analysisObject.totalFrameStringLength});
+
+            double delayScore = (analysisObject.windowAvgDelay * analysisObject.downscaleRatio * 10);
+            delayScoreArray.add((1 + ((double) (downScaleCount > upScaleCount ? downScaleCount - upScaleCount : 0) / 1000)) * delayScore);
+            graphicScoreArray.add((double) analysisObject.totalFrameStringLength / 1000 * frameRateArray[i]);
+
+            if (!analysisObject.isWarmUpFrame) {
+                meaningfulFrameRateArray.add(analysisObject.currentFrameRate);
+            }
+        }
+
+        frameChart.updateXYSeries("Frame Rate", frameCountArray, frameRateArray, null);
+        frameChart.updateXYSeries("Downscale Ratio", frameCountArray, downScaleRatioArray, null);
+
+        Objects.requireNonNull(addSeries(frameChart, "Delay (ms)", delayArray)).setMarker(SeriesMarkers.NONE);
+        Objects.requireNonNull(addSeries(frameChart, "Windowed Delay (ms)", avgDelayArray)).setMarker(SeriesMarkers.NONE);
+
+        setMarkerType(addSeries(frameChart, "Good", goodArray));
+        setMarkerType(addSeries(frameChart, "Poor", poorArray));
+        setMarkerType(addSeries(frameChart, "Skipped", skipArray));
+        setMarkerType(addSeries(frameChart, "Warm Up", warmupArray));
+
+        XYChart frameLengthChart = new XYChartBuilder()
+                .width(1000).height(800)
+                .title(getChartTitle("Frame String Size"))
+                .theme(Styler.ChartTheme.Matlab)
+                .xAxisTitle("Frame Count")
+                .yAxisTitle("Bytes").build();
+        frameLengthChart.getStyler().setLegendPosition(Styler.LegendPosition.InsideNW);
+        Objects.requireNonNull(addSeries(frameLengthChart, "Frame Length (Bytes)", frameLengthArray)).setMarker(SeriesMarkers.NONE);
+
+        XYChart audioSyncChart = new XYChartBuilder()
+                .width(1000).height(800)
+                .title(getChartTitle("Video & Audio Sync Diff"))
+                .theme(Styler.ChartTheme.Matlab)
+                .xAxisTitle("Frame Count")
+                .yAxisTitle("Second").build();
+        audioSyncChart.getStyler().setLegendPosition(Styler.LegendPosition.InsideSW);
+        Objects.requireNonNull(addSeries(audioSyncChart, "Sync Diff", audioSyncArray)).setMarker(SeriesMarkers.NONE);
+
+        double frameAvg = harmonicMean(meaningfulFrameRateArray);
+        for (double datum : meaningfulFrameRateArray) {
+            if (datum > frameAvg - 1 && datum < frameAvg + 1) {
+                mainGoodGapFrameCount += 1;
+            }
+        }
+
+        final double frameStability = ((double) mainGoodGapFrameCount / analysisArray.size());
+        final double s_graphic = harmonicMean(graphicScoreArray);
+        final double s_advantage = ((1 + (frameStability / 10)) * s_graphic);
+        final double s_disadvantage = harmonicMean(delayScoreArray);
+        final double finalScore = s_advantage - s_disadvantage;
+
+        if (parameters.benchOutputFile != null) {
+            String dateString = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Calendar.getInstance().getTime());
+            String fileName = parameters.inputFile == null ? "BadApple.mp4" : parameters.inputFile.getName();
+            File outputFile = new File(parameters.benchOutputFile + "/" + fileName + " " + dateString);
+
+            outputFile.delete();
+            outputFile.mkdir();
+
+            BitmapEncoder.saveBitmapWithDPI(frameChart, outputFile + "/frameRate.jpg", BitmapEncoder.BitmapFormat.JPG, 300);
+            BitmapEncoder.saveBitmapWithDPI(frameLengthChart, outputFile + "/totalFrameLength.jpg", BitmapEncoder.BitmapFormat.JPG, 300);
+            BitmapEncoder.saveBitmapWithDPI(audioSyncChart, outputFile + "/audioSyncDiff.jpg", BitmapEncoder.BitmapFormat.JPG, 300);
+
+            String inputFileHash;
+            if(parameters.inputFile == null) {
+                inputFileHash = makeFileHashSha256(Objects.requireNonNull(BadApple.class.getResource("BadApple.mp4")).openStream());
+            } else {
+                inputFileHash = makeFileHashSha256(parameters.inputFile.getPath());
+            }
+
+            String benchMetadata = getMetaFormat(
+                    BadApple_Version,
+                    commandString,
+                    dateString,
+                    fileName,
+
+                    finalScore,
+                    frameStability * 100,
+                    s_advantage,
+                    s_disadvantage,
+
+                    inputFileHash,
+                    makeFileHashSha256(outputFile + "/audioSyncDiff.jpg"),
+                    makeFileHashSha256(outputFile + "/frameRate.jpg"),
+                    makeFileHashSha256(outputFile + "/totalFrameLength.jpg")
+            );
+
+            String selfHash = shaAndBase64(benchMetadata);
+            benchMetadata += String.format("Self Hash (Above This Line): %s", selfHash);
+
+            try (FileOutputStream fos = new FileOutputStream(outputFile + "/benchMetadata.txt")){
+                fos.write(benchMetadata.getBytes(StandardCharsets.UTF_8));
+            }
+        }
+
+        System.out.printf("Results\nBenchMark Score: %.0f Frame Stability: %.0f%%\nDefault Score: %.0f, Bad Score %.0f\n", finalScore, frameStability * 100, s_advantage, s_disadvantage);
+    }
+
+    private static String getMetaFormat(Object... args) {
+        String metaFormat = "BadAppleMark Version: %s\n";
+        metaFormat += "====== Basic Info ======\n";
+        metaFormat += "Options: %s\n";
+        metaFormat += "Test Date: %s\n";
+        metaFormat += "Test File: %s\n";
+        metaFormat += "====== Bench Score Info ======\n";
+        metaFormat += "BenchMark Score: %.0f\n";
+        metaFormat += "Frame Stability: %.0f%%\n";
+        metaFormat += "Default Score: %.0f\n";
+        metaFormat += "Bad Score %.0f\n";
+        metaFormat += "====== File Hash Info ======\n";
+        metaFormat += "Test File Hash: %s\n";
+        metaFormat += "audioSyncDiff.jpg Hash: %s\n";
+        metaFormat += "frameRate.jpg Hash: %s\n";
+        metaFormat += "totalFrameLength.jpg Hash: %s\n";
+        return String.format(metaFormat, args);
+    }
+
+    public static double harmonicMean(ArrayList<Double> data) {
+        double sum = 0;
+        for (double datum : data) {
+            sum += datum;
+        }
+        return (sum / data.size());
+    }
+
+    public static String makeFileHashSha256(String path) throws IOException, NoSuchAlgorithmException {
+        return makeFileHashSha256(Files.newInputStream(Paths.get(path)));
+    }
+
+    public static String makeFileHashSha256(InputStream stream) throws IOException, NoSuchAlgorithmException {
+        MessageDigest sha = MessageDigest.getInstance("SHA-256");
+        DigestInputStream din = new DigestInputStream(stream, sha);
+
+        while (true) {
+            if(din.read() == -1) break;
+        }
+
+        din.close();
+        return Base64.getEncoder().encodeToString(sha.digest());
+    }
+
+    public static String shaAndBase64(String plainText) throws NoSuchAlgorithmException {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        md.update(plainText.getBytes(StandardCharsets.UTF_8));
+        return Base64.getEncoder().encodeToString(md.digest());
+    }
+
+    private static String getChartTitle(String defaultTitle) {
+        String fileName = "BadApple.mp4";
+        if (parameters.inputFile != null) {
+            fileName = parameters.inputFile.getName();
+        }
+
+        return String.format("BadAppleMark %s, %s, File: %s", BadApple_Version, defaultTitle, fileName);
+    }
+
+    private static void setMarkerType(XYSeries series) {
+        if (series != null) {
+            series.setXYSeriesRenderStyle(XYSeries.XYSeriesRenderStyle.Scatter);
+        }
+    }
+
+    private static XYSeries addSeries(XYChart chart, String seriesName, ArrayList<double[]> array) {
+        double[][] arrayFinal = getXYArray(array);
+        if (arrayFinal[1].length > 0) {
+            return chart.addSeries(seriesName, arrayFinal[0], arrayFinal[1]);
+        }
+        return null;
+    }
+
+    private static void checkDoubleInfinityAndCorrect(double[] arr, int index) {
+        if (arr[index] == Double.POSITIVE_INFINITY || arr[index] == Double.NEGATIVE_INFINITY) {
+            arr[index] = 0;
+        }
+    }
+
+    private static double[][] getXYArray(ArrayList<double[]> array) {
+        double[] x = new double[array.size()];
+        double[] y = new double[array.size()];
+        int count = 0;
+
+        for (double[] arr : array) {
+            x[count] = arr[0];
+            y[count] = arr[1];
+
+            count += 1;
+        }
+
+        return new double[][]{x, y};
     }
 
     private static void processVideoFrame(long printStartedTime, Frame frame) throws IOException, InterruptedException {
@@ -399,9 +742,9 @@ public class BadApple {
                         audioLock.notify();
                     }
                 }
-            } else if (syncDiff * -1 > allowableRange) {
+            } else if (syncDiff * -1 > allowableRange / 4) {
                 audioSyncStatement = SYNC_VIDEO_FAST;
-                Thread.sleep((long) ((currentVideoSecond - currentAudioSecond) * 3));
+                Thread.sleep((long) ((currentVideoSecond - currentAudioSecond) * 6));
             } else if (syncDiff <= allowableRange) {
                 audioSyncStatement = SYNC_FIT;
                 if (audioWaitLonger.get()) synchronized (audioLock) {
@@ -414,7 +757,7 @@ public class BadApple {
 
     private static String getVerbose(String textToPrint, String[] lines) {
         String verbose = "";
-        if (parameters.autoDelay && parameters.verbose) {
+        if (parameters.autoDelay) {
             double videoInSecond = videoFrameIndex / videoFrameRate;
             double audioInSecond = audioFrameIndex / audioFrameRate;
 
@@ -427,15 +770,32 @@ public class BadApple {
             String fpsString = String.format("%.2f     ", 1000 / lastProcessDuration);
             fpsString = fpsString.equals("Infinity") ? "0.0" : fpsString;
 
-            verbose = String.format(" Delay (ms): %.2f, Ratio: %s, Fps: %s\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Window: %d, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s), Perfect: (Threshold: %s, Count: %s)\n",
-                    lastDelay, parameters.ratioValueResize, fpsString,
-                    lines.length, lines[0].length(), textToPrint.length(),
-                    videoInSecond, audioInSecond, audioInSecond - videoInSecond,
+            if (parameters.verbose) {
+                verbose = String.format(" Delay (ms): %.2f, Ratio: %s, Fps: %s\n Lines: %s, Single: %s, Total: %s\n Video (s): %.2f, Audio (s): %.2f, Diff (s): %.2f\n Avg: %.2f, Window: %d, Poor: (Start: %s, Count: %s), Good: (Start: %s, Count: %s), Perfect: (Threshold: %s, Count: %s)\n",
+                        lastDelay, parameters.ratioValueResize, fpsString,
+                        lines.length, lines[0].length(), textToPrint.length(),
+                        videoInSecond, audioInSecond, audioInSecond - videoInSecond,
 
-                    averageProcessingTime, delayTimeWindow.length, poorMonitoring.monitoredRegionsStartFrames, poorMonitoring.performanceCount,
-                    goodMonitoring.monitoredRegionsStartFrames, goodMonitoring.performanceCount, perfectCountThreshold, perfectCount
-            );
+                        averageProcessingTime, delayTimeWindow.length, poorMonitoring.monitoredRegionsStartFrames, poorMonitoring.performanceCount,
+                        goodMonitoring.monitoredRegionsStartFrames, goodMonitoring.performanceCount, perfectCountThreshold, perfectCount
+                );
+            }
+
+            if (parameters.benchPerformance) {
+                currentAnalysisObject.totalFrameStringLength = textToPrint.length();
+                currentAnalysisObject.currentFrameRate = 1000 / lastProcessDuration;
+                currentAnalysisObject.isWarmUpFrame = (decidedDelayWindowSize == warmUpDelayWindowSize);
+
+                currentAnalysisObject.windowAvgDelay = averageProcessingTime;
+                currentAnalysisObject.uniqueDelay = lastDelay;
+                currentAnalysisObject.downscaleRatio = parameters.ratioValueResize;
+
+                currentAnalysisObject.videoTime = videoInSecond;
+                currentAnalysisObject.audioTime = audioInSecond;
+                currentAnalysisObject.diffAudioSync = audioInSecond - videoInSecond;
+            }
         }
+
         return verbose;
     }
 
@@ -462,7 +822,7 @@ public class BadApple {
     }
 
     private static void collectWindowedAvgDelay() {
-        if(decidedDelayWindowSize == warmUpDelayWindowSize) {
+        if (decidedDelayWindowSize == warmUpDelayWindowSize) {
             decidedDelayWindowSize = mainDelayWindowSize;
             delayWindowIndex = 0;
             delayTimeWindow = new double[decidedDelayWindowSize];
@@ -504,6 +864,11 @@ public class BadApple {
                 poorMonitoring.calculateRegion();
                 goodMonitoring.resetRegion();
 
+                if (parameters.benchPerformance) {
+                    currentAnalysisObject.isPoor = true;
+                    currentAnalysisObject.isGood = false;
+                }
+
                 if (poorMonitoring.performanceCount <= 0) {
                     delayTimeWindow = new double[decidedDelayWindowSize];
                     delayWindowIndex = 0;
@@ -511,6 +876,7 @@ public class BadApple {
                     perfectCount = 0;
 
                     parameters.ratioValueResize += 1;
+                    upScaleCount += 1;
                     clearScreen(true);
                 }
             } else {
@@ -518,6 +884,7 @@ public class BadApple {
                 delayWindowIndex = 0;
 
                 parameters.ratioValueResize += 1;
+                upScaleCount += 1;
                 clearScreen(true);
             }
         } else if (parameters.ratioValueResize > 1 && averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.3) {
@@ -525,11 +892,17 @@ public class BadApple {
                 goodMonitoring.calculateRegion();
                 poorMonitoring.resetRegion();
 
+                if (parameters.benchPerformance) {
+                    currentAnalysisObject.isGood = true;
+                    currentAnalysisObject.isPoor = false;
+                }
+
                 if (goodMonitoring.performanceCount <= 0) {
                     delayTimeWindow = new double[decidedDelayWindowSize];
                     delayWindowIndex = 0;
 
                     parameters.ratioValueResize -= 1;
+                    downScaleCount += 1;
                     clearScreen(true);
                     goodMonitoring.resetRegion();
                     perfectCount = 0;
@@ -579,7 +952,7 @@ public class BadApple {
 
                 try {
                     Frame sample = audioGrabber.grabSamples();
-                    if(sample != null) {
+                    if (sample != null) {
                         processAudio(sample.samples, sampleFormat, sourceDataLine);
                     }
                 } catch (FFmpegFrameGrabber.Exception e) {
@@ -786,6 +1159,8 @@ public class BadApple {
         parameters = new Parameters();
         picocli.CommandLine commandLine = new picocli.CommandLine(parameters);
         commandLine.setUnmatchedArgumentsAllowed(false).parseArgs(args);
+        commandString = Arrays.toString(args);
+
         if (parameters.inputFile != null) {
             if (!parameters.inputFile.canRead()) {
                 System.out.println("File Cannot be read: " + parameters.inputFile.getName());
@@ -805,7 +1180,6 @@ public class BadApple {
         else {
             String helpMessage = String.format("BadApple-Java, Written By.Choiman1559, Version: %s\n", BadApple_Version);
             helpMessage += commandLine.getUsageMessage();
-
             System.out.print(helpMessage);
         }
     }
