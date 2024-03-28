@@ -141,6 +141,9 @@ public class BadApple {
     static double[] delayTimeWindow = new double[decidedDelayWindowSize];
     static int delayWindowIndex = 0;
 
+    static int lastLowestRatio = -1;
+    static HashMap<Integer, Integer> goodThresholdMagnification = new HashMap<>();
+
     static final int SYNC_AUDIO_FAST = 1;
     static final int SYNC_FIT = 0;
     static final int SYNC_VIDEO_FAST = -1;
@@ -148,6 +151,7 @@ public class BadApple {
 
     static class RegionsMonitoringObject {
         int performanceThreshold;
+        int thresholdMagnification = 1;
         int performanceCount = -1;
         int monitoredRegionsThreshold;
         int monitoredRegionsStartFrames = 0;
@@ -163,7 +167,7 @@ public class BadApple {
         }
 
         void resetRegion() {
-            performanceCount = performanceThreshold;
+            performanceCount = performanceThreshold * thresholdMagnification;
             withinMonitoredRegion = false;
         }
 
@@ -272,11 +276,11 @@ public class BadApple {
         poorMonitoring.resetRegion();
 
         goodMonitoring.monitoredRegionsThreshold = (int) (videoFrameRate * 40);
-        goodMonitoring.performanceThreshold = (int) (goodMonitoring.monitoredRegionsThreshold * 0.9);
+        goodMonitoring.performanceThreshold = poorMonitoring.performanceThreshold * 2;
         poorMonitoring.resetRegion();
 
         perfectCount = 0;
-        perfectCountThreshold = (int) (fFmpegFrameGrabber.getLengthInFrames() * 0.35);
+        perfectCountThreshold = (int) (fFmpegFrameGrabber.getLengthInFrames() * 0.18);
 
         System.out.println("Duration Video: " + videoTotalFrame / videoFrameRate + ", Audio: " + audioTotalFrame / audioFrameRate);
         System.out.println("Start running video extraction frame, it takes a long time");
@@ -369,6 +373,9 @@ public class BadApple {
             delayTimeWindow = new double[decidedDelayWindowSize];
             delayWindowIndex = 0;
 
+            lastLowestRatio = -1;
+            goodThresholdMagnification = new HashMap<>();
+
             poorMonitoring = new RegionsMonitoringObject();
             goodMonitoring = new RegionsMonitoringObject();
 
@@ -452,15 +459,14 @@ public class BadApple {
                 skipArray.add(new double[]{i, downScaleRatioArray[i]});
             }
 
-            audioSyncArray.add(new double[]{i, analysisObject.diffAudioSync});
-            frameLengthArray.add(new double[]{i, analysisObject.totalFrameStringLength});
-
             double delayScore = (analysisObject.windowAvgDelay * analysisObject.downscaleRatio * 10);
             delayScoreArray.add((1 + ((double) (downScaleCount > upScaleCount ? downScaleCount - upScaleCount : 0) / 1000)) * delayScore);
             graphicScoreArray.add((double) analysisObject.totalFrameStringLength / 1000 * frameRateArray[i]);
+            audioSyncArray.add(new double[]{i, analysisObject.diffAudioSync});
 
             if (!analysisObject.isWarmUpFrame) {
                 meaningfulFrameRateArray.add(analysisObject.currentFrameRate);
+                frameLengthArray.add(new double[]{i, analysisObject.totalFrameStringLength});
             }
         }
 
@@ -573,11 +579,12 @@ public class BadApple {
     }
 
     public static double harmonicMean(ArrayList<Double> data) {
-        double sum = 0;
+        double sum = 0L;
         for (double datum : data) {
-            sum += datum;
+            double dataToAdd = 1 / datum;
+            sum += Double.isInfinite(dataToAdd) ? 0 : dataToAdd;
         }
-        return (sum / data.size());
+        return data.size() / sum;
     }
 
     public static String makeFileHashSha256(String path) throws IOException, NoSuchAlgorithmException {
@@ -861,8 +868,9 @@ public class BadApple {
 
         if (lastDelay < 0 || averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.99) {
             if (decidedDelayWindowSize == mainDelayWindowSize) {
-                poorMonitoring.calculateRegion();
+                goodMonitoring.thresholdMagnification = goodThresholdMagnification.getOrDefault(parameters.ratioValueResize, 1);
                 goodMonitoring.resetRegion();
+                poorMonitoring.calculateRegion();
 
                 if (parameters.benchPerformance) {
                     currentAnalysisObject.isPoor = true;
@@ -877,6 +885,18 @@ public class BadApple {
 
                     parameters.ratioValueResize += 1;
                     upScaleCount += 1;
+
+                    if(lastLowestRatio == -1 || lastLowestRatio >= parameters.ratioValueResize) {
+                        lastLowestRatio = parameters.ratioValueResize;
+                    }
+
+                    int currentRatio = parameters.ratioValueResize;
+                    if(goodThresholdMagnification.containsKey(currentRatio)) {
+                        goodThresholdMagnification.put(currentRatio, goodThresholdMagnification.get(currentRatio) + 1);
+                    } else {
+                        goodThresholdMagnification.put(currentRatio, 2);
+                    }
+
                     clearScreen(true);
                 }
             } else {
@@ -887,7 +907,7 @@ public class BadApple {
                 upScaleCount += 1;
                 clearScreen(true);
             }
-        } else if (parameters.ratioValueResize > 1 && averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.3) {
+        } else if (parameters.ratioValueResize > 1 && averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.125) {
             if (decidedDelayWindowSize == mainDelayWindowSize) {
                 goodMonitoring.calculateRegion();
                 poorMonitoring.resetRegion();
@@ -898,14 +918,18 @@ public class BadApple {
                 }
 
                 if (goodMonitoring.performanceCount <= 0) {
-                    delayTimeWindow = new double[decidedDelayWindowSize];
-                    delayWindowIndex = 0;
+                    if(goodThresholdMagnification.getOrDefault(parameters.ratioValueResize, 1) < 3 || lastLowestRatio < parameters.ratioValueResize - 1) {
+                        delayTimeWindow = new double[decidedDelayWindowSize];
+                        delayWindowIndex = 0;
 
-                    parameters.ratioValueResize -= 1;
-                    downScaleCount += 1;
-                    clearScreen(true);
-                    goodMonitoring.resetRegion();
-                    perfectCount = 0;
+                        parameters.ratioValueResize -= (parameters.ratioValueResize >= 20 ? parameters.ratioValueResize / 10 : 1);
+                        downScaleCount += 1;
+                        perfectCount = 0;
+
+                        goodMonitoring.thresholdMagnification = goodThresholdMagnification.getOrDefault(parameters.ratioValueResize, 1);
+                        goodMonitoring.resetRegion();
+                        clearScreen(true);
+                    }
                 }
             }
         } else if (decidedDelayWindowSize == mainDelayWindowSize) {
