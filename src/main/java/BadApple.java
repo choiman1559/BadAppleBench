@@ -389,18 +389,12 @@ public class BadApple {
 
         /*
           BenchMarking Formula (V.2.1.0)
-          final_score =  s_advantage - s_disadvantage
-
-          s_graphic = Harmonic_Mean(length / 1000 * frame)
-          s_advantage = ((1 + (main_frame_gap / total_frame_count) * 100) * s_graphic)
-          s_disadvantage = Harmonic_Mean((1 + ((down - up) / 1000) * s_delay)
-          s_delay = (win_delay * ratio * 10)
+          score = Harmonic_Mean(frame_length * (1 / ratio) * frame_rate)
         */
 
         int mainGoodGapFrameCount = 0;
         ArrayList<Double> meaningfulFrameRateArray = new ArrayList<>();
-        ArrayList<Double> graphicScoreArray = new ArrayList<>();
-        ArrayList<Double> delayScoreArray = new ArrayList<>();
+        ArrayList<Double> finalScoreArray = new ArrayList<>();
 
         double[] frameCountArray = new double[analysisArray.size() - 2];
         double[] frameRateArray = new double[analysisArray.size() - 2];
@@ -459,10 +453,11 @@ public class BadApple {
                 skipArray.add(new double[]{i, downScaleRatioArray[i]});
             }
 
-            double delayScore = (analysisObject.windowAvgDelay * analysisObject.downscaleRatio * 10);
-            delayScoreArray.add((1 + ((double) (downScaleCount > upScaleCount ? downScaleCount - upScaleCount : 0) / 1000)) * delayScore);
-            graphicScoreArray.add((double) analysisObject.totalFrameStringLength / 1000 * frameRateArray[i]);
             audioSyncArray.add(new double[]{i, analysisObject.diffAudioSync});
+            double currentFrameScore = analysisObject.totalFrameStringLength
+                    * ((double) 1 / analysisObject.downscaleRatio)
+                    * analysisObject.currentFrameRate;
+            finalScoreArray.add(currentFrameScore);
 
             if (!analysisObject.isWarmUpFrame) {
                 meaningfulFrameRateArray.add(analysisObject.currentFrameRate);
@@ -507,10 +502,8 @@ public class BadApple {
         }
 
         final double frameStability = ((double) mainGoodGapFrameCount / analysisArray.size());
-        final double s_graphic = harmonicMean(graphicScoreArray);
-        final double s_advantage = ((1 + (frameStability / 10)) * s_graphic);
-        final double s_disadvantage = harmonicMean(delayScoreArray);
-        final double finalScore = s_advantage - s_disadvantage;
+        final double finalScore = harmonicMean(finalScoreArray);
+        String scoreString = String.format("%.0f", finalScore);
 
         if (parameters.benchOutputFile != null) {
             String dateString = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Calendar.getInstance().getTime());
@@ -537,10 +530,8 @@ public class BadApple {
                     dateString,
                     fileName,
 
-                    finalScore,
+                    scoreString,
                     frameStability * 100,
-                    s_advantage,
-                    s_disadvantage,
 
                     inputFileHash,
                     makeFileHashSha256(outputFile + "/audioSyncDiff.jpg"),
@@ -556,7 +547,7 @@ public class BadApple {
             }
         }
 
-        System.out.printf("Results\nBenchMark Score: %.0f Frame Stability: %.0f%%\nDefault Score: %.0f, Bad Score %.0f\n", finalScore, frameStability * 100, s_advantage, s_disadvantage);
+        System.out.printf("Results\nBenchMark Score: %s Frame Stability: %.0f%%\n", scoreString, frameStability * 100);
     }
 
     private static String getMetaFormat(Object... args) {
@@ -566,10 +557,8 @@ public class BadApple {
         metaFormat += "Test Date: %s\n";
         metaFormat += "Test File: %s\n";
         metaFormat += "====== Bench Score Info ======\n";
-        metaFormat += "BenchMark Score: %.0f\n";
+        metaFormat += "BenchMark Score: %s\n";
         metaFormat += "Frame Stability: %.0f%%\n";
-        metaFormat += "Default Score: %.0f\n";
-        metaFormat += "Bad Score %.0f\n";
         metaFormat += "====== File Hash Info ======\n";
         metaFormat += "Test File Hash: %s\n";
         metaFormat += "audioSyncDiff.jpg Hash: %s\n";
@@ -579,12 +568,18 @@ public class BadApple {
     }
 
     public static double harmonicMean(ArrayList<Double> data) {
+        int nonCalculatableCount = 0;
         double sum = 0L;
+
         for (double datum : data) {
             double dataToAdd = 1 / datum;
-            sum += Double.isInfinite(dataToAdd) ? 0 : dataToAdd;
+            if(Double.isInfinite(dataToAdd) || Double.isNaN(dataToAdd)) {
+                nonCalculatableCount += 1;
+            } else {
+                sum += dataToAdd;
+            }
         }
-        return data.size() / sum;
+        return (data.size() - nonCalculatableCount) / sum;
     }
 
     public static String makeFileHashSha256(String path) throws IOException, NoSuchAlgorithmException {
