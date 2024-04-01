@@ -20,15 +20,14 @@ Recommended requirement:
 
 ## Usage
 <pre>
-<pre>BadApple-Java, Written By.Choiman1559, Version: 2.1.0
-Usage: <b>BadApple</b> [<font color="#A2734C">-abcehlmpqrsv</font>] [<font color="#A2734C">-ad</font>] [<font color="#A2734C">-ar</font>] [<font color="#A2734C">-cn</font>] [<font color="#A2734C">-bs</font>=<i>&lt;bufferSize&gt;</i>]
+<pre>BadApple-Java, Written By.Choiman1559, Version: 2.1.1
+Usage: <b>BadApple</b> [<font color="#A2734C">-abcehlmpqrsvx</font>] [<font color="#A2734C">-ap</font>] [<font color="#A2734C">-cn</font>] [<font color="#A2734C">-xd</font>] [<font color="#A2734C">-xr</font>] [<font color="#A2734C">-bs</font>=<i>&lt;bufferSize&gt;</i>]
                 [<font color="#A2734C">-d</font>=<i>&lt;delayMilliseconds&gt;</i>] [<font color="#A2734C">-dn</font>=<i>&lt;delayNanoseconds&gt;</i>] [<font color="#A2734C">-f</font>=<i>ARCHIVE</i>]
                 [<font color="#A2734C">-mo</font>=<i>ARCHIVE</i>] [<font color="#A2734C">-t</font>=<i>&lt;ratioValueResize&gt;</i>]
 Prints ascii-ed &quot;Bad Apple&quot; video.
   <font color="#A2734C">-a</font>, <font color="#A2734C">--audio</font>               Play mp4 file&apos;s audio
-      <font color="#A2734C">-ad, --auto-delay</font>     (Experimental) Automatically determines delay length
-      <font color="#A2734C">-ar, --auto-ratio</font>     (Experimental) Automatically determines downscale
-                              ratio
+      <font color="#A2734C">-ap, --psudo-audio</font>    Pseudo-simulates music output. This can be useful
+                              on systems without a sound device.
   <font color="#A2734C">-b</font>, <font color="#A2734C">--buffer-output</font>       use more buffer when print ascii
       <font color="#A2734C">-bs, --buffer-size</font>=<i>&lt;bufferSize&gt;</i>
                             Size of Buffer, Default is 8192 bytes.
@@ -54,13 +53,17 @@ Prints ascii-ed &quot;Bad Apple&quot; video.
   <font color="#A2734C">-s</font>, <font color="#A2734C">--sync-audio</font>          Sync audio with video
   <font color="#A2734C">-t</font>, <font color="#A2734C">--ratio</font>=<i>&lt;ratioValueResize&gt;</i>
                             Aspect ratio value to downscale frames
-  <font color="#A2734C">-v</font>, <font color="#A2734C">--verbose</font>             Print debug log under frame while playing video</pre>
+  <font color="#A2734C">-v</font>, <font color="#A2734C">--verbose</font>             Print debug log under frame while playing video
+  <font color="#A2734C">-x</font>, <font color="#A2734C">--auto-control</font>        Automatically determines and control delay length
+                              and downscale ratio
+      <font color="#A2734C">-xd, --auto-delay</font>     Automatically controls delay length
+      <font color="#A2734C">-xr, --auto-ratio</font>     Automatically determines downscale ratio</pre>
 </pre>
 
 ## Examples
 
 ### Example 01
-Command: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=3 -d=12 -s=true -q=true -ad=true -ar=false`
+Command: `java -jar ./BadApple.jar -a=true -ap=false -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=3 -d=12 -s=true -q=true -xd=true -xr=false`
 
 Original Video: [Bad Apple!!](https://www.youtube.com/watch?v=i41KoE0iMYU)
 
@@ -72,7 +75,7 @@ Frame Analytics Data:
 Original Video: [Never Gonna Give You Up](https://www.youtube.com/watch?v=dQw4w9WgXcQ) ~LOL~
 
 ### Example 02 
-Command: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=5 -d=12 -s=true -q=true -ad=true -ar=true -f=<Your MP4 File Here>`
+Command: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=5 -d=12 -s=true -q=true -xd=true -xr=true -f=<Your MP4 File Here>`
 
 ![image](https://github.com/choiman1559/BadApple_Java/assets/43315227/2a6b37aa-1470-45ed-888f-6821d533969f)
 
@@ -81,7 +84,7 @@ Frame Analytics Data:
 
 
 ### Example 03
-Command: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=4 -d=12 -s=true -q=true -ad=true -ar=false -f=<Your MP4 File Here>`
+Command: `java -jar ./BadApple.jar -a=true -v=true -b=true -bs=10000 -c=true -cn=false -e=true -l=false -p=false -r=true -t=4 -d=12 -s=true -q=true -xd=true -xr=false -f=<Your MP4 File Here>`
 
 Original Video: [言って｡](https://youtu.be/F64yFFnZfkI)
 

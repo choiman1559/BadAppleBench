@@ -40,7 +40,7 @@ import picocli.CommandLine;
 import static com.diogonunes.jcolor.Ansi.colorize;
 
 public class BadApple {
-    static final String BadApple_Version = "2.1.0";
+    static final String BadApple_Version = "2.1.1";
 
     @CommandLine.Command(name = "BadApple", helpCommand = true, description = "Prints ascii-ed \"Bad Apple\" video.")
     static class Parameters {
@@ -65,10 +65,13 @@ public class BadApple {
         @CommandLine.Option(names = {"-dn", "--delay-nano"}, description = "Set the delay between frames (milliseconds)")
         public long delayNanoseconds = -1;
 
-        @CommandLine.Option(names = {"-ad", "--auto-delay"}, description = "(Experimental) Automatically determines delay length")
+        @CommandLine.Option(names = {"-x", "--auto-control"}, description = "Automatically determines and control delay length and downscale ratio")
+        public boolean autoFrameControl = false;
+
+        @CommandLine.Option(names = {"-xd", "--auto-delay"}, description = "Automatically controls delay length")
         public boolean autoDelay = false;
 
-        @CommandLine.Option(names = {"-ar", "--auto-ratio"}, description = "(Experimental) Automatically determines downscale ratio")
+        @CommandLine.Option(names = {"-xr", "--auto-ratio"}, description = "Automatically determines downscale ratio")
         public boolean autoRatio = false;
 
         @CommandLine.Option(names = {"-t", "--ratio"}, description = "Aspect ratio value to downscale frames")
@@ -76,6 +79,9 @@ public class BadApple {
 
         @CommandLine.Option(names = {"-a", "--audio"}, description = "Play mp4 file's audio")
         public boolean playAudio = false;
+
+        @CommandLine.Option(names = {"-ap", "--psudo-audio"}, description = "Pseudo-simulates music output. This can be useful on systems without a sound device.")
+        public boolean psudoAudio = false;
 
         @CommandLine.Option(names = {"-l", "--loop"}, description = "Play video by loop")
         public boolean playAsLoop = false;
@@ -231,18 +237,27 @@ public class BadApple {
             }
         }
 
+        if (parameters.autoFrameControl) {
+            parameters.autoRatio = true;
+            parameters.autoDelay = true;
+        }
+
         FFmpegFrameGrabber fFmpegFrameGrabber = new FFmpegFrameGrabber(resource.openStream());
         fFmpegFrameGrabber.start();
         int sampleFormat = fFmpegFrameGrabber.getSampleFormat();
-
         FFmpegFrameGrabber audioGrabber = new FFmpegFrameGrabber(resource.openStream());
         audioGrabber.start();
-        AudioFormat af = getAudioFormat(audioGrabber);
-        DataLine.Info dataLineInfo;
-        dataLineInfo = new DataLine.Info(SourceDataLine.class, af, AudioSystem.NOT_SPECIFIED);
-        SourceDataLine sourceDataLine = (SourceDataLine) AudioSystem.getLine(dataLineInfo);
-        sourceDataLine.open(af);
-        sourceDataLine.start();
+
+        SourceDataLine sourceDataLine = null;
+        if (parameters.playAudio && !parameters.psudoAudio) {
+            AudioFormat af = getAudioFormat(audioGrabber);
+            DataLine.Info dataLineInfo;
+            dataLineInfo = new DataLine.Info(SourceDataLine.class, af, AudioSystem.NOT_SPECIFIED);
+
+            sourceDataLine = (SourceDataLine) AudioSystem.getLine(dataLineInfo);
+            sourceDataLine.open(af);
+            sourceDataLine.start();
+        }
 
         OutputStream outputStream = new FileOutputStream(FileDescriptor.out);
         printStream = new BufferedWriter(new OutputStreamWriter(outputStream, StandardCharsets.US_ASCII), parameters.bufferSize);
@@ -388,8 +403,9 @@ public class BadApple {
         System.out.println("============ Started to write benchmark analysis results... ============");
 
         /*
-          BenchMarking Formula (V.2.1.0)
-          score = Harmonic_Mean(frame_length * (1 / ratio) * frame_rate)
+          BenchMarking Formula (Since v2.1.1)
+          graphic_score = (frame_length * (1 / ratio) * frame_rate * (1 - audio_sync_diff))
+          final_score = Harmonic_Mean(graphic_score - ((default_delay - windowed_delay / 100) * graphic_score))
         */
 
         int mainGoodGapFrameCount = 0;
@@ -456,8 +472,13 @@ public class BadApple {
             audioSyncArray.add(new double[]{i, analysisObject.diffAudioSync});
             double currentFrameScore = analysisObject.totalFrameStringLength
                     * ((double) 1 / analysisObject.downscaleRatio)
-                    * analysisObject.currentFrameRate;
-            finalScoreArray.add(currentFrameScore);
+                    * analysisObject.currentFrameRate
+                    * (1 - analysisObject.diffAudioSync);
+
+            double finalFrameScore = currentFrameScore
+                    - (((analysisObject.windowAvgDelay > 1 ? defaultDelayLength - analysisObject.windowAvgDelay : 100) / 100)
+                    * currentFrameScore);
+            finalScoreArray.add(finalFrameScore);
 
             if (!analysisObject.isWarmUpFrame) {
                 meaningfulFrameRateArray.add(analysisObject.currentFrameRate);
@@ -518,7 +539,7 @@ public class BadApple {
             BitmapEncoder.saveBitmapWithDPI(audioSyncChart, outputFile + "/audioSyncDiff.jpg", BitmapEncoder.BitmapFormat.JPG, 300);
 
             String inputFileHash;
-            if(parameters.inputFile == null) {
+            if (parameters.inputFile == null) {
                 inputFileHash = makeFileHashSha256(Objects.requireNonNull(BadApple.class.getResource("BadApple.mp4")).openStream());
             } else {
                 inputFileHash = makeFileHashSha256(parameters.inputFile.getPath());
@@ -542,12 +563,12 @@ public class BadApple {
             String selfHash = shaAndBase64(benchMetadata);
             benchMetadata += String.format("Self Hash (Above This Line): %s", selfHash);
 
-            try (FileOutputStream fos = new FileOutputStream(outputFile + "/benchMetadata.txt")){
+            try (FileOutputStream fos = new FileOutputStream(outputFile + "/benchMetadata.txt")) {
                 fos.write(benchMetadata.getBytes(StandardCharsets.UTF_8));
             }
         }
 
-        System.out.printf("Results\nBenchMark Score: %s Frame Stability: %.0f%%\n", scoreString, frameStability * 100);
+        System.out.printf("Results\n BenchMark Score: %s\n Frame Stability: %.0f%%\n", scoreString, frameStability * 100);
     }
 
     private static String getMetaFormat(Object... args) {
@@ -573,7 +594,7 @@ public class BadApple {
 
         for (double datum : data) {
             double dataToAdd = 1 / datum;
-            if(Double.isInfinite(dataToAdd) || Double.isNaN(dataToAdd)) {
+            if (Double.isInfinite(dataToAdd) || Double.isNaN(dataToAdd)) {
                 nonCalculatableCount += 1;
             } else {
                 sum += dataToAdd;
@@ -591,7 +612,7 @@ public class BadApple {
         DigestInputStream din = new DigestInputStream(stream, sha);
 
         while (true) {
-            if(din.read() == -1) break;
+            if (din.read() == -1) break;
         }
 
         din.close();
@@ -881,12 +902,12 @@ public class BadApple {
                     parameters.ratioValueResize += 1;
                     upScaleCount += 1;
 
-                    if(lastLowestRatio == -1 || lastLowestRatio >= parameters.ratioValueResize) {
+                    if (lastLowestRatio == -1 || lastLowestRatio >= parameters.ratioValueResize) {
                         lastLowestRatio = parameters.ratioValueResize;
                     }
 
                     int currentRatio = parameters.ratioValueResize;
-                    if(goodThresholdMagnification.containsKey(currentRatio)) {
+                    if (goodThresholdMagnification.containsKey(currentRatio)) {
                         goodThresholdMagnification.put(currentRatio, goodThresholdMagnification.get(currentRatio) + 1);
                     } else {
                         goodThresholdMagnification.put(currentRatio, 2);
@@ -902,7 +923,7 @@ public class BadApple {
                 upScaleCount += 1;
                 clearScreen(true);
             }
-        } else if (parameters.ratioValueResize > 1 && averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.125) {
+        } else if (parameters.ratioValueResize > 1 && averageProcessingTime < defaultDelayLength - defaultDelayLength * 0.1) {
             if (decidedDelayWindowSize == mainDelayWindowSize) {
                 goodMonitoring.calculateRegion();
                 poorMonitoring.resetRegion();
@@ -913,7 +934,7 @@ public class BadApple {
                 }
 
                 if (goodMonitoring.performanceCount <= 0) {
-                    if(goodThresholdMagnification.getOrDefault(parameters.ratioValueResize, 1) < 3 || lastLowestRatio < parameters.ratioValueResize - 1) {
+                    if (goodThresholdMagnification.getOrDefault(parameters.ratioValueResize, 1) < 3 || lastLowestRatio < parameters.ratioValueResize - 1) {
                         delayTimeWindow = new double[decidedDelayWindowSize];
                         delayWindowIndex = 0;
 
@@ -955,7 +976,8 @@ public class BadApple {
     private static void initAudioThread(FFmpegFrameGrabber audioGrabber, int sampleFormat, SourceDataLine sourceDataLine) {
         if (audioThread == null || !audioThread.isAlive()) audioThread = new Thread(() -> {
             audioFrameIndex = 0;
-            int audioFtp = audioGrabber.getLengthInAudioFrames();
+            final int audioFtp = audioGrabber.getLengthInAudioFrames();
+            final long psudoAudioGap = (long) (1000 / audioGrabber.getAudioFrameRate());
 
             while (audioFrameIndex <= audioFtp) {
                 synchronized (audioLock) {
@@ -970,12 +992,18 @@ public class BadApple {
                 }
 
                 try {
-                    Frame sample = audioGrabber.grabSamples();
-                    if (sample != null) {
-                        processAudio(sample.samples, sampleFormat, sourceDataLine);
+                    if (parameters.psudoAudio) {
+                        Thread.sleep(psudoAudioGap);
+                    } else {
+                        Frame sample = audioGrabber.grabSamples();
+                        if (sample != null) {
+                            processAudio(sample.samples, sampleFormat, sourceDataLine);
+                        }
                     }
                 } catch (FFmpegFrameGrabber.Exception e) {
                     System.out.println("Error while processing audio:" + e.getMessage());
+                } catch (InterruptedException e) {
+                    System.out.println("Error while processing psudo-audio:" + e.getMessage());
                 }
                 audioFrameIndex++;
             }
